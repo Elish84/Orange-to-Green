@@ -1,0 +1,521 @@
+import { firebaseConfig } from "./firebase-config.js";
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  doc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+// ===================== CONFIG =====================
+const COLLECTION_NAME = "houseScans";
+const SECTORS = ["א'","ב'","ג'","מסייעת","גדוד","אחר"];
+const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפונית","עצור"];
+
+// ===================== INIT =====================
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ===================== UI HELPERS =====================
+const $ = (id) => document.getElementById(id);
+
+function setToast(el, type, msg) {
+  el.classList.remove("ok","bad");
+  el.classList.add(type);
+  el.textContent = msg;
+  el.style.display = "block";
+  window.clearTimeout(el._t);
+  el._t = window.setTimeout(() => { el.style.display = "none"; }, 2800);
+}
+
+function toDatetimeLocalValue(date) {
+  // local datetime-local expects "YYYY-MM-DDTHH:mm"
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function parseDatetimeLocalToISO(dtLocal) {
+  // dtLocal is local time, convert to ISO string
+  const d = new Date(dtLocal);
+  return d.toISOString();
+}
+
+function safeNum(x, def=0) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : def;
+}
+
+function fmtShortTime(isoOrDate) {
+  const d = (isoOrDate instanceof Date) ? isoOrDate : new Date(isoOrDate);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("he-IL", { year:"2-digit", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+}
+
+function normalizeText(s) {
+  return (s ?? "").toString().trim().toLowerCase();
+}
+
+// ===================== TABS =====================
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    btn.classList.add("active");
+
+    const tab = btn.dataset.tab;
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
+    $(`tab-${tab}`).classList.add("show");
+  });
+});
+
+// ===================== FORM DEFAULTS =====================
+const eventTimeEl = $("eventTime");
+eventTimeEl.value = toDatetimeLocalValue(new Date());
+
+$("btnReset").addEventListener("click", () => {
+  $("scanForm").reset();
+  eventTimeEl.value = toDatetimeLocalValue(new Date());
+  clearGPS();
+  $("attachmentCountWrap").style.display = "none";
+  $("attachmentCount").value = 1;
+  $("detention").value = "ללא";
+});
+
+$("hasAttachment").addEventListener("change", (e) => {
+  $("attachmentCountWrap").style.display = e.target.checked ? "block" : "none";
+  if (!e.target.checked) $("attachmentCount").value = 1;
+});
+
+let currentGPS = null;
+
+function setGPSStatus(text, muted=false) {
+  const el = $("gpsStatus");
+  el.textContent = `GPS: ${text}`;
+  el.classList.toggle("muted", muted);
+}
+
+function renderGPSPreview(gps) {
+  $("latVal").textContent = gps?.lat ?? "—";
+  $("lngVal").textContent = gps?.lng ?? "—";
+  $("accVal").textContent = gps?.accuracy ?? "—";
+}
+
+function clearGPS() {
+  currentGPS = null;
+  renderGPSPreview(null);
+  setGPSStatus("לא בוצע", true);
+}
+
+$("btnClearGPS").addEventListener("click", clearGPS);
+
+$("btnGetGPS").addEventListener("click", async () => {
+  if (!navigator.geolocation) {
+    setGPSStatus("לא נתמך במכשיר", false);
+    return;
+  }
+  setGPSStatus("מבצע…", false);
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      currentGPS = {
+        lat: Number(latitude.toFixed(6)),
+        lng: Number(longitude.toFixed(6)),
+        accuracy: Math.round(accuracy),
+        capturedAt: new Date().toISOString()
+      };
+      renderGPSPreview(currentGPS);
+      setGPSStatus("נשמר", false);
+    },
+    (err) => {
+      setGPSStatus(`שגיאה (${err.code})`, false);
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+  );
+});
+
+// ===================== SAVE FORM =====================
+$("scanForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const toast = $("formToast");
+
+  const eventTimeLocal = $("eventTime").value;
+  const sector = $("sector").value;
+  const houseSite = $("houseSite").value?.trim();
+
+  if (!eventTimeLocal || !sector || !houseSite) {
+    setToast(toast, "bad", "חסרים שדות חובה: זמן/תאריך, גזרה, איתור בית");
+    return;
+  }
+
+  const hasAttachment = $("hasAttachment").checked;
+  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("attachmentCount").value, 1)) : 0;
+
+  const payload = {
+    eventTimeLocal,                 // לשחזור מדויק של מה שהמשתמש ראה
+    eventTimeISO: parseDatetimeLocalToISO(eventTimeLocal),
+    fillerName: ($("fillerName").value ?? "").trim(),
+    sector,
+    houseSite,
+    gps: currentGPS,                // {lat,lng,accuracy,capturedAt} או null
+    status: {
+      hasAttachment,
+      attachmentCount,
+      weaponScan: $("weaponScan").checked,
+      mapping: $("mapping").checked,
+      detention: $("detention").value || "ללא"
+    },
+    notes: ($("notes").value ?? "").trim(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    $("btnSave").disabled = true;
+    await addDoc(collection(db, COLLECTION_NAME), payload);
+    setToast(toast, "ok", "נשמר בהצלחה ✅");
+    $("btnReset").click();
+  } catch (err) {
+    console.error(err);
+    setToast(toast, "bad", "שגיאה בשמירה ל-DB");
+  } finally {
+    $("btnSave").disabled = false;
+  }
+});
+
+// ===================== REALTIME LISTENER =====================
+const rtEl = $("rtStatus");
+
+let liveRows = [];     // normalized docs for UI
+let chartBySector = null;
+let chartDetention = null;
+
+function initCharts() {
+  const ctx1 = $("chartBySector");
+  const ctx2 = $("chartDetention");
+
+  chartBySector = new Chart(ctx1, {
+    type: "bar",
+    data: {
+      labels: SECTORS,
+      datasets: [{ label: "כמות איתורים (רשומות)", data: SECTORS.map(() => 0) }]
+    },
+    options: { responsive: true, plugins: { legend: { display: true } } }
+  });
+
+  chartDetention = new Chart(ctx2, {
+    type: "doughnut",
+    data: {
+      labels: DETENTION_OPTIONS,
+      datasets: [{ label: "חקירות/מעצרים", data: DETENTION_OPTIONS.map(() => 0) }]
+    },
+    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+  });
+}
+
+initCharts();
+
+const q = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
+onSnapshot(q, (snap) => {
+  rtEl.textContent = "מחובר ל-DB: כן";
+  rtEl.style.borderColor = "rgba(25,195,125,0.45)";
+  rtEl.style.background = "rgba(25,195,125,0.12)";
+
+  const rows = [];
+  snap.forEach(d => {
+    const data = d.data();
+    rows.push({
+      id: d.id,
+      ...data,
+      // guard defaults
+      sector: data.sector ?? "אחר",
+      fillerName: data.fillerName ?? "",
+      houseSite: data.houseSite ?? "",
+      eventTimeISO: data.eventTimeISO ?? null,
+      eventTimeLocal: data.eventTimeLocal ?? "",
+      gps: data.gps ?? null,
+      status: {
+        hasAttachment: !!data?.status?.hasAttachment,
+        attachmentCount: safeNum(data?.status?.attachmentCount, 0),
+        weaponScan: !!data?.status?.weaponScan,
+        mapping: !!data?.status?.mapping,
+        detention: data?.status?.detention ?? "ללא"
+      },
+      notes: data.notes ?? ""
+    });
+  });
+
+  liveRows = rows;
+  renderDashboard(rows);
+  renderRecords(rows);
+}, (err) => {
+  console.error(err);
+  rtEl.textContent = "מחובר ל-DB: שגיאה";
+  rtEl.style.borderColor = "rgba(255,77,77,0.5)";
+  rtEl.style.background = "rgba(255,77,77,0.12)";
+});
+
+// ===================== DASHBOARD =====================
+function computeAggregates(rows) {
+  const bySector = Object.fromEntries(SECTORS.map(s => [s, {
+    total: 0,
+    weapon: 0,
+    attachments: 0,
+    detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map(x => [x, 0]))
+  }]));
+
+  const overall = {
+    total: 0,
+    weapon: 0,
+    attachments: 0,
+    detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map(x => [x, 0]))
+  };
+
+  for (const r of rows) {
+    const s = SECTORS.includes(r.sector) ? r.sector : "אחר";
+    const det = DETENTION_OPTIONS.includes(r.status.detention) ? r.status.detention : "ללא";
+
+    bySector[s].total += 1;
+    overall.total += 1;
+
+    if (r.status.weaponScan) { bySector[s].weapon += 1; overall.weapon += 1; }
+
+    if (r.status.hasAttachment) {
+      const cnt = Math.max(0, safeNum(r.status.attachmentCount, 0));
+      bySector[s].attachments += cnt;
+      overall.attachments += cnt;
+    }
+
+    bySector[s].detentionCounts[det] += 1;
+    overall.detentionCounts[det] += 1;
+  }
+
+  return { bySector, overall };
+}
+
+function renderDashboard(rows) {
+  const { bySector, overall } = computeAggregates(rows);
+
+  $("totalRecords").textContent = rows.length;
+  $("kpiCompleted").textContent = overall.total;
+  $("kpiWeapon").textContent = overall.weapon;
+  $("kpiAttachments").textContent = overall.attachments;
+
+  $("lastUpdate").textContent = fmtShortTime(new Date());
+
+  // Chart: by sector
+  chartBySector.data.datasets[0].data = SECTORS.map(s => bySector[s].total);
+  chartBySector.update();
+
+  // Chart: detention overall
+  chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map(k => overall.detentionCounts[k] ?? 0);
+  chartDetention.update();
+
+  // Sector cards
+  const wrap = $("sectorCards");
+  wrap.innerHTML = "";
+
+  for (const s of SECTORS) {
+    const ag = bySector[s];
+    const detTop = DETENTION_OPTIONS
+      .map(k => ({ k, v: ag.detentionCounts[k] ?? 0 }))
+      .sort((a,b) => b.v - a.v)[0];
+
+    const el = document.createElement("div");
+    el.className = "sectorCard";
+    el.innerHTML = `
+      <div class="sectorTitle">גזרה ${s}</div>
+      <div class="sectorStats">
+        <div class="statBox"><div class="k">איתורים הושלמו</div><div class="v">${ag.total}</div></div>
+        <div class="statBox"><div class="k">סריקות אמל"ח</div><div class="v">${ag.weapon}</div></div>
+        <div class="statBox"><div class="k">סה"כ הצמדות</div><div class="v">${ag.attachments}</div></div>
+        <div class="statBox"><div class="k">חקירות/מעצרים (מוביל)</div><div class="v">${detTop.k}: ${detTop.v}</div></div>
+      </div>
+    `;
+    wrap.appendChild(el);
+  }
+}
+
+// ===================== RECORDS =====================
+$("searchBox").addEventListener("input", () => renderRecords(liveRows));
+$("sectorFilter").addEventListener("change", () => renderRecords(liveRows));
+
+function renderRecords(rows) {
+  const tbody = $("recordsTbody");
+  const empty = $("emptyState");
+  tbody.innerHTML = "";
+
+  const qText = normalizeText($("searchBox").value);
+  const sectorFilter = $("sectorFilter").value;
+
+  const filtered = rows.filter(r => {
+    if (sectorFilter && r.sector !== sectorFilter) return false;
+    if (!qText) return true;
+    const hay = [
+      r.fillerName, r.sector, r.houseSite,
+      r.status?.detention, r.notes
+    ].map(normalizeText).join(" | ");
+    return hay.includes(qText);
+  });
+
+  if (filtered.length === 0) {
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+
+  for (const r of filtered) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${fmtShortTime(r.eventTimeISO)}</td>
+      <td>${escapeHtml(r.fillerName)}</td>
+      <td>${escapeHtml(r.sector)}</td>
+      <td>${escapeHtml(r.houseSite)}</td>
+      <td>${r.status.weaponScan ? "כן" : "לא"}</td>
+      <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount,0)})` : "לא"}</td>
+      <td>${escapeHtml(r.status.detention)}</td>
+      <td>
+        <div class="rowActions">
+          <button class="linkBtn" data-act="edit" data-id="${r.id}">עריכה</button>
+          <button class="linkBtn danger" data-act="del" data-id="${r.id}">מחיקה</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  tbody.querySelectorAll("button[data-act]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const act = btn.dataset.act;
+      const row = liveRows.find(x => x.id === id);
+      if (!row) return;
+
+      if (act === "edit") openEditModal(row);
+      if (act === "del") await deleteRow(row);
+    });
+  });
+}
+
+function escapeHtml(str) {
+  return (str ?? "").toString()
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// ===================== DELETE =====================
+async function deleteRow(row) {
+  const ok = confirm(`למחוק רשומה?\nגזרה: ${row.sector}\nאיתור: ${row.houseSite}\nזמן: ${fmtShortTime(row.eventTimeISO)}`);
+  if (!ok) return;
+
+  try {
+    await deleteDoc(doc(db, COLLECTION_NAME, row.id));
+  } catch (e) {
+    console.error(e);
+    alert("שגיאה במחיקה");
+  }
+}
+
+// ===================== EDIT MODAL =====================
+const modal = $("editModal");
+
+function openEditModal(row) {
+  $("editId").value = row.id;
+  $("editEventTime").value = row.eventTimeLocal || toDatetimeLocalValue(new Date(row.eventTimeISO || Date.now()));
+  $("editFillerName").value = row.fillerName || "";
+  $("editSector").value = SECTORS.includes(row.sector) ? row.sector : "אחר";
+  $("editHouseSite").value = row.houseSite || "";
+
+  const gps = row.gps ?? null;
+  $("editLat").textContent = gps?.lat ?? "—";
+  $("editLng").textContent = gps?.lng ?? "—";
+  $("editAcc").textContent = gps?.accuracy ?? "—";
+
+  $("editHasAttachment").checked = !!row.status.hasAttachment;
+  $("editWeaponScan").checked = !!row.status.weaponScan;
+  $("editMapping").checked = !!row.status.mapping;
+  $("editDetention").value = DETENTION_OPTIONS.includes(row.status.detention) ? row.status.detention : "ללא";
+
+  $("editAttachmentCountWrap").style.display = row.status.hasAttachment ? "block" : "none";
+  $("editAttachmentCount").value = Math.max(1, safeNum(row.status.attachmentCount, 1));
+
+  $("editNotes").value = row.notes || "";
+
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeModal() {
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+$("btnCloseModal").addEventListener("click", closeModal);
+$("btnCancelEdit").addEventListener("click", closeModal);
+
+$("editHasAttachment").addEventListener("change", (e) => {
+  $("editAttachmentCountWrap").style.display = e.target.checked ? "block" : "none";
+  if (!e.target.checked) $("editAttachmentCount").value = 1;
+});
+
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) closeModal();
+});
+
+$("editForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const toast = $("editToast");
+
+  const id = $("editId").value;
+  const eventTimeLocal = $("editEventTime").value;
+  const sector = $("editSector").value;
+  const houseSite = $("editHouseSite").value?.trim();
+
+  if (!id || !eventTimeLocal || !sector || !houseSite) {
+    setToast(toast, "bad", "חסרים שדות חובה");
+    return;
+  }
+
+  const hasAttachment = $("editHasAttachment").checked;
+  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("editAttachmentCount").value, 1)) : 0;
+
+  const patch = {
+    eventTimeLocal,
+    eventTimeISO: parseDatetimeLocalToISO(eventTimeLocal),
+    fillerName: ($("editFillerName").value ?? "").trim(),
+    sector,
+    houseSite,
+    status: {
+      hasAttachment,
+      attachmentCount,
+      weaponScan: $("editWeaponScan").checked,
+      mapping: $("editMapping").checked,
+      detention: $("editDetention").value || "ללא"
+    },
+    notes: ($("editNotes").value ?? "").trim(),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    await updateDoc(doc(db, COLLECTION_NAME, id), patch);
+    setToast(toast, "ok", "עודכן ✅");
+    window.setTimeout(closeModal, 650);
+  } catch (err) {
+    console.error(err);
+    setToast(toast, "bad", "שגיאה בעדכון");
+  }
+});
