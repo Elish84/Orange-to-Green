@@ -18,8 +18,9 @@ import {
 
 import {
   getAuth,
-  signInAnonymously,
-  onAuthStateChanged
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 // ===================== CONFIG =====================
@@ -90,7 +91,25 @@ signInAnonymously(auth).catch((err) => {
 });
 
 let isAdmin = false;
+async function promptAdminLogin() {
+  const email = prompt("Admin Email:");
+  if (!email) return false;
+  const password = prompt("Password:");
+  if (!password) return false;
 
+  try {
+    await signInWithEmailAndPassword(auth, email.trim(), password);
+    return true;
+  } catch (e) {
+    console.error(e);
+    alert("התחברות נכשלה");
+    return false;
+  }
+}
+
+async function logoutAdmin() {
+  try { await signOut(auth); } catch (e) { console.error(e); }
+}
 // UI indicators (optional, but useful)
 function setRtStatus(ok, text) {
   const rtEl = $("rtStatus");
@@ -139,13 +158,28 @@ async function checkIsAdmin(uid) {
 
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach(btn => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", async () => {
+
+    const tab = btn.dataset.tab;
+
+    // Gate רק לדשבורד/רשומות
+    if ((tab === "dashboard" || tab === "records") && !isAdmin) {
+      const ok = await promptAdminLogin();
+      if (!ok) return; // המשתמש ביטל/נכשל
+
+      // נחכה רגע ל-onAuthStateChanged שיעדכן isAdmin
+      // ואז נבדוק שוב
+      if (!isAdmin) {
+        alert("אין הרשאת Admin");
+        return;
+      }
+    }
+
     document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
     btn.classList.add("active");
 
-    const tab = btn.dataset.tab;
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
-    $(`tab-${tab}`)?.classList.add("show");
+    document.getElementById(`tab-${tab}`)?.classList.add("show");
   });
 });
 
