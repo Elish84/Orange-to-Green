@@ -115,10 +115,14 @@ function setAdminUI(admin) {
 
   // אם לא אדמין והוא נמצא במסך דשבורד/רשומות — נחזיר למסך טופס
   if (!admin) {
-    const active = document.querySelector(".tab.active")?.dataset?.tab;
-    if (active === "dashboard" || active === "records") {
-      document.querySelector(`.tab[data-tab="form"]`)?.click();
-    }
+    const activeEl = document.querySelector(".tab.active");
+const active = (activeEl && activeEl.dataset) ? activeEl.dataset.tab : null;
+
+if (active === "dashboard" || active === "records") {
+  const formBtn = document.querySelector('.tab[data-tab="form"]');
+  if (formBtn) formBtn.click();
+}
+    
   }
 }
 
