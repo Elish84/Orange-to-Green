@@ -1,3 +1,4 @@
+```js
 import { firebaseConfig } from "./firebase-config.js";
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -11,8 +12,15 @@ import {
   onSnapshot,
   query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  getDoc
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 // ===================== CONFIG =====================
 const COLLECTION_NAME = "houseScans";
@@ -22,6 +30,7 @@ const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפו
 // ===================== INIT =====================
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 // ===================== UI HELPERS =====================
 const $ = (id) => document.getElementById(id);
@@ -36,7 +45,6 @@ function setToast(el, type, msg) {
 }
 
 function toDatetimeLocalValue(date) {
-  // local datetime-local expects "YYYY-MM-DDTHH:mm"
   const pad = (n) => String(n).padStart(2, "0");
   const yyyy = date.getFullYear();
   const mm = pad(date.getMonth() + 1);
@@ -47,7 +55,6 @@ function toDatetimeLocalValue(date) {
 }
 
 function parseDatetimeLocalToISO(dtLocal) {
-  // dtLocal is local time, convert to ISO string
   const d = new Date(dtLocal);
   return d.toISOString();
 }
@@ -67,6 +74,65 @@ function normalizeText(s) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
+function escapeHtml(str) {
+  return (str ?? "").toString()
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// ===================== AUTH (Anonymous) =====================
+// חובה: להפעיל Anonymous ב-Firebase Console → Authentication → Sign-in method
+signInAnonymously(auth).catch((err) => {
+  console.error("Anonymous sign-in failed:", err);
+});
+
+let isAdmin = false;
+
+// UI indicators (optional, but useful)
+function setRtStatus(ok, text) {
+  const rtEl = $("rtStatus");
+  if (!rtEl) return;
+  rtEl.textContent = text;
+  if (ok) {
+    rtEl.style.borderColor = "rgba(25,195,125,0.45)";
+    rtEl.style.background = "rgba(25,195,125,0.12)";
+  } else {
+    rtEl.style.borderColor = "rgba(255,77,77,0.5)";
+    rtEl.style.background = "rgba(255,77,77,0.12)";
+  }
+}
+
+function setAdminUI(admin) {
+  // הסתרת טאבים/מסכים למי שלא אדמין (כדי לא לקבל PERMISSION errors)
+  const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
+  const recTabBtn  = document.querySelector(`.tab[data-tab="records"]`);
+
+  if (dashTabBtn) dashTabBtn.style.display = admin ? "" : "none";
+  if (recTabBtn)  recTabBtn.style.display  = admin ? "" : "none";
+
+  // אם לא אדמין והוא נמצא במסך דשבורד/רשומות — נחזיר למסך טופס
+  if (!admin) {
+    const active = document.querySelector(".tab.active")?.dataset?.tab;
+    if (active === "dashboard" || active === "records") {
+      document.querySelector(`.tab[data-tab="form"]`)?.click();
+    }
+  }
+}
+
+async function checkIsAdmin(uid) {
+  try {
+    const ref = doc(db, "admins", uid);
+    const snap = await getDoc(ref);
+    return snap.exists();
+  } catch (e) {
+    console.error("Admin check failed:", e);
+    return false;
+  }
+}
+
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -75,40 +141,49 @@ document.querySelectorAll(".tab").forEach(btn => {
 
     const tab = btn.dataset.tab;
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
-    $(`tab-${tab}`).classList.add("show");
+    $(`tab-${tab}`)?.classList.add("show");
   });
 });
 
 // ===================== FORM DEFAULTS =====================
 const eventTimeEl = $("eventTime");
-eventTimeEl.value = toDatetimeLocalValue(new Date());
+if (eventTimeEl) eventTimeEl.value = toDatetimeLocalValue(new Date());
 
-$("btnReset").addEventListener("click", () => {
-  $("scanForm").reset();
-  eventTimeEl.value = toDatetimeLocalValue(new Date());
+$("btnReset")?.addEventListener("click", () => {
+  $("scanForm")?.reset();
+  if (eventTimeEl) eventTimeEl.value = toDatetimeLocalValue(new Date());
   clearGPS();
-  $("attachmentCountWrap").style.display = "none";
-  $("attachmentCount").value = 1;
-  $("detention").value = "ללא";
+  const wrap = $("attachmentCountWrap");
+  if (wrap) wrap.style.display = "none";
+  const c = $("attachmentCount");
+  if (c) c.value = 1;
+  const det = $("detention");
+  if (det) det.value = "ללא";
 });
 
-$("hasAttachment").addEventListener("change", (e) => {
-  $("attachmentCountWrap").style.display = e.target.checked ? "block" : "none";
-  if (!e.target.checked) $("attachmentCount").value = 1;
+$("hasAttachment")?.addEventListener("change", (e) => {
+  const wrap = $("attachmentCountWrap");
+  if (wrap) wrap.style.display = e.target.checked ? "block" : "none";
+  if (!e.target.checked) {
+    const c = $("attachmentCount");
+    if (c) c.value = 1;
+  }
 });
 
 let currentGPS = null;
 
 function setGPSStatus(text, muted=false) {
   const el = $("gpsStatus");
+  if (!el) return;
   el.textContent = `GPS: ${text}`;
   el.classList.toggle("muted", muted);
 }
 
 function renderGPSPreview(gps) {
-  $("latVal").textContent = gps?.lat ?? "—";
-  $("lngVal").textContent = gps?.lng ?? "—";
-  $("accVal").textContent = gps?.accuracy ?? "—";
+  const lat = $("latVal"), lng = $("lngVal"), acc = $("accVal");
+  if (lat) lat.textContent = gps?.lat ?? "—";
+  if (lng) lng.textContent = gps?.lng ?? "—";
+  if (acc) acc.textContent = gps?.accuracy ?? "—";
 }
 
 function clearGPS() {
@@ -117,9 +192,9 @@ function clearGPS() {
   setGPSStatus("לא בוצע", true);
 }
 
-$("btnClearGPS").addEventListener("click", clearGPS);
+$("btnClearGPS")?.addEventListener("click", clearGPS);
 
-$("btnGetGPS").addEventListener("click", async () => {
+$("btnGetGPS")?.addEventListener("click", async () => {
   if (!navigator.geolocation) {
     setGPSStatus("לא נתמך במכשיר", false);
     return;
@@ -146,64 +221,67 @@ $("btnGetGPS").addEventListener("click", async () => {
 });
 
 // ===================== SAVE FORM =====================
-$("scanForm").addEventListener("submit", async (e) => {
+$("scanForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const toast = $("formToast");
 
-  const eventTimeLocal = $("eventTime").value;
-  const sector = $("sector").value;
-  const houseSite = $("houseSite").value?.trim();
+  const eventTimeLocal = $("eventTime")?.value;
+  const sector = $("sector")?.value;
+  const houseSite = $("houseSite")?.value?.trim();
 
   if (!eventTimeLocal || !sector || !houseSite) {
-    setToast(toast, "bad", "חסרים שדות חובה: זמן/תאריך, גזרה, איתור בית");
+    if (toast) setToast(toast, "bad", "חסרים שדות חובה: זמן/תאריך, גזרה, איתור בית");
     return;
   }
 
-  const hasAttachment = $("hasAttachment").checked;
-  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("attachmentCount").value, 1)) : 0;
+  const hasAttachment = $("hasAttachment")?.checked;
+  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("attachmentCount")?.value, 1)) : 0;
 
   const payload = {
-    eventTimeLocal,                 // לשחזור מדויק של מה שהמשתמש ראה
+    eventTimeLocal,
     eventTimeISO: parseDatetimeLocalToISO(eventTimeLocal),
-    fillerName: ($("fillerName").value ?? "").trim(),
+    fillerName: ($("fillerName")?.value ?? "").trim(),
     sector,
     houseSite,
-    gps: currentGPS,                // {lat,lng,accuracy,capturedAt} או null
+    gps: currentGPS,
     status: {
-      hasAttachment,
+      hasAttachment: !!hasAttachment,
       attachmentCount,
-      weaponScan: $("weaponScan").checked,
-      mapping: $("mapping").checked,
-      detention: $("detention").value || "ללא"
+      weaponScan: !!$("weaponScan")?.checked,
+      mapping: !!$("mapping")?.checked,
+      detention: $("detention")?.value || "ללא"
     },
-    notes: ($("notes").value ?? "").trim(),
+    notes: ($("notes")?.value ?? "").trim(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   };
 
   try {
-    $("btnSave").disabled = true;
+    const btn = $("btnSave");
+    if (btn) btn.disabled = true;
+
     await addDoc(collection(db, COLLECTION_NAME), payload);
-    setToast(toast, "ok", "נשמר בהצלחה ✅");
-    $("btnReset").click();
+
+    if (toast) setToast(toast, "ok", "נשמר בהצלחה ✅");
+    $("btnReset")?.click();
   } catch (err) {
     console.error(err);
-    setToast(toast, "bad", "שגיאה בשמירה ל-DB");
+    if (toast) setToast(toast, "bad", "שגיאה בשמירה ל-DB (בדוק הרשאות/Auth)");
   } finally {
-    $("btnSave").disabled = false;
+    const btn = $("btnSave");
+    if (btn) btn.disabled = false;
   }
 });
 
-// ===================== REALTIME LISTENER =====================
-const rtEl = $("rtStatus");
-
-let liveRows = [];     // normalized docs for UI
+// ===================== CHARTS =====================
+let liveRows = [];
 let chartBySector = null;
 let chartDetention = null;
 
 function initCharts() {
   const ctx1 = $("chartBySector");
   const ctx2 = $("chartDetention");
+  if (!ctx1 || !ctx2) return;
 
   chartBySector = new Chart(ctx1, {
     type: "bar",
@@ -224,49 +302,6 @@ function initCharts() {
   });
 }
 
-initCharts();
-
-const q = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
-onSnapshot(q, (snap) => {
-  rtEl.textContent = "מחובר ל-DB: כן";
-  rtEl.style.borderColor = "rgba(25,195,125,0.45)";
-  rtEl.style.background = "rgba(25,195,125,0.12)";
-
-  const rows = [];
-  snap.forEach(d => {
-    const data = d.data();
-    rows.push({
-      id: d.id,
-      ...data,
-      // guard defaults
-      sector: data.sector ?? "אחר",
-      fillerName: data.fillerName ?? "",
-      houseSite: data.houseSite ?? "",
-      eventTimeISO: data.eventTimeISO ?? null,
-      eventTimeLocal: data.eventTimeLocal ?? "",
-      gps: data.gps ?? null,
-      status: {
-        hasAttachment: !!data?.status?.hasAttachment,
-        attachmentCount: safeNum(data?.status?.attachmentCount, 0),
-        weaponScan: !!data?.status?.weaponScan,
-        mapping: !!data?.status?.mapping,
-        detention: data?.status?.detention ?? "ללא"
-      },
-      notes: data.notes ?? ""
-    });
-  });
-
-  liveRows = rows;
-  renderDashboard(rows);
-  renderRecords(rows);
-}, (err) => {
-  console.error(err);
-  rtEl.textContent = "מחובר ל-DB: שגיאה";
-  rtEl.style.borderColor = "rgba(255,77,77,0.5)";
-  rtEl.style.background = "rgba(255,77,77,0.12)";
-});
-
-// ===================== DASHBOARD =====================
 function computeAggregates(rows) {
   const bySector = Object.fromEntries(SECTORS.map(s => [s, {
     total: 0,
@@ -305,6 +340,8 @@ function computeAggregates(rows) {
 }
 
 function renderDashboard(rows) {
+  if (!isAdmin) return;
+
   const { bySector, overall } = computeAggregates(rows);
 
   $("totalRecords").textContent = rows.length;
@@ -314,50 +351,56 @@ function renderDashboard(rows) {
 
   $("lastUpdate").textContent = fmtShortTime(new Date());
 
-  // Chart: by sector
-  chartBySector.data.datasets[0].data = SECTORS.map(s => bySector[s].total);
-  chartBySector.update();
+  if (chartBySector) {
+    chartBySector.data.datasets[0].data = SECTORS.map(s => bySector[s].total);
+    chartBySector.update();
+  }
 
-  // Chart: detention overall
-  chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map(k => overall.detentionCounts[k] ?? 0);
-  chartDetention.update();
+  if (chartDetention) {
+    chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map(k => overall.detentionCounts[k] ?? 0);
+    chartDetention.update();
+  }
 
-  // Sector cards
   const wrap = $("sectorCards");
-  wrap.innerHTML = "";
+  if (wrap) {
+    wrap.innerHTML = "";
+    for (const s of SECTORS) {
+      const ag = bySector[s];
+      const detTop = DETENTION_OPTIONS
+        .map(k => ({ k, v: ag.detentionCounts[k] ?? 0 }))
+        .sort((a,b) => b.v - a.v)[0];
 
-  for (const s of SECTORS) {
-    const ag = bySector[s];
-    const detTop = DETENTION_OPTIONS
-      .map(k => ({ k, v: ag.detentionCounts[k] ?? 0 }))
-      .sort((a,b) => b.v - a.v)[0];
-
-    const el = document.createElement("div");
-    el.className = "sectorCard";
-    el.innerHTML = `
-      <div class="sectorTitle">גזרה ${s}</div>
-      <div class="sectorStats">
-        <div class="statBox"><div class="k">איתורים הושלמו</div><div class="v">${ag.total}</div></div>
-        <div class="statBox"><div class="k">סריקות אמל"ח</div><div class="v">${ag.weapon}</div></div>
-        <div class="statBox"><div class="k">סה"כ הצמדות</div><div class="v">${ag.attachments}</div></div>
-        <div class="statBox"><div class="k">חקירות/מעצרים (מוביל)</div><div class="v">${detTop.k}: ${detTop.v}</div></div>
-      </div>
-    `;
-    wrap.appendChild(el);
+      const el = document.createElement("div");
+      el.className = "sectorCard";
+      el.innerHTML = `
+        <div class="sectorTitle">גזרה ${s}</div>
+        <div class="sectorStats">
+          <div class="statBox"><div class="k">איתורים הושלמו</div><div class="v">${ag.total}</div></div>
+          <div class="statBox"><div class="k">סריקות אמל"ח</div><div class="v">${ag.weapon}</div></div>
+          <div class="statBox"><div class="k">סה"כ הצמדות</div><div class="v">${ag.attachments}</div></div>
+          <div class="statBox"><div class="k">חקירות/מעצרים (מוביל)</div><div class="v">${detTop.k}: ${detTop.v}</div></div>
+        </div>
+      `;
+      wrap.appendChild(el);
+    }
   }
 }
 
 // ===================== RECORDS =====================
-$("searchBox").addEventListener("input", () => renderRecords(liveRows));
-$("sectorFilter").addEventListener("change", () => renderRecords(liveRows));
+$("searchBox")?.addEventListener("input", () => renderRecords(liveRows));
+$("sectorFilter")?.addEventListener("change", () => renderRecords(liveRows));
 
 function renderRecords(rows) {
+  if (!isAdmin) return;
+
   const tbody = $("recordsTbody");
   const empty = $("emptyState");
+  if (!tbody || !empty) return;
+
   tbody.innerHTML = "";
 
-  const qText = normalizeText($("searchBox").value);
-  const sectorFilter = $("sectorFilter").value;
+  const qText = normalizeText($("searchBox")?.value);
+  const sectorFilter = $("sectorFilter")?.value;
 
   const filtered = rows.filter(r => {
     if (sectorFilter && r.sector !== sectorFilter) return false;
@@ -408,17 +451,10 @@ function renderRecords(rows) {
   });
 }
 
-function escapeHtml(str) {
-  return (str ?? "").toString()
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 // ===================== DELETE =====================
 async function deleteRow(row) {
+  if (!isAdmin) return;
+
   const ok = confirm(`למחוק רשומה?\nגזרה: ${row.sector}\nאיתור: ${row.houseSite}\nזמן: ${fmtShortTime(row.eventTimeISO)}`);
   if (!ok) return;
 
@@ -434,6 +470,8 @@ async function deleteRow(row) {
 const modal = $("editModal");
 
 function openEditModal(row) {
+  if (!isAdmin) return;
+
   $("editId").value = row.id;
   $("editEventTime").value = row.eventTimeLocal || toDatetimeLocalValue(new Date(row.eventTimeISO || Date.now()));
   $("editFillerName").value = row.fillerName || "";
@@ -464,20 +502,22 @@ function closeModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
-$("btnCloseModal").addEventListener("click", closeModal);
-$("btnCancelEdit").addEventListener("click", closeModal);
+$("btnCloseModal")?.addEventListener("click", closeModal);
+$("btnCancelEdit")?.addEventListener("click", closeModal);
 
-$("editHasAttachment").addEventListener("change", (e) => {
+$("editHasAttachment")?.addEventListener("change", (e) => {
   $("editAttachmentCountWrap").style.display = e.target.checked ? "block" : "none";
   if (!e.target.checked) $("editAttachmentCount").value = 1;
 });
 
-modal.addEventListener("click", (e) => {
+modal?.addEventListener("click", (e) => {
   if (e.target === modal) closeModal();
 });
 
-$("editForm").addEventListener("submit", async (e) => {
+$("editForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!isAdmin) return;
+
   const toast = $("editToast");
 
   const id = $("editId").value;
@@ -486,7 +526,7 @@ $("editForm").addEventListener("submit", async (e) => {
   const houseSite = $("editHouseSite").value?.trim();
 
   if (!id || !eventTimeLocal || !sector || !houseSite) {
-    setToast(toast, "bad", "חסרים שדות חובה");
+    if (toast) setToast(toast, "bad", "חסרים שדות חובה");
     return;
   }
 
@@ -512,10 +552,76 @@ $("editForm").addEventListener("submit", async (e) => {
 
   try {
     await updateDoc(doc(db, COLLECTION_NAME, id), patch);
-    setToast(toast, "ok", "עודכן ✅");
+    if (toast) setToast(toast, "ok", "עודכן ✅");
     window.setTimeout(closeModal, 650);
   } catch (err) {
     console.error(err);
-    setToast(toast, "bad", "שגיאה בעדכון");
+    if (toast) setToast(toast, "bad", "שגיאה בעדכון");
   }
 });
+
+// ===================== ADMIN GATE + REALTIME LISTENER =====================
+function startRealtimeListener() {
+  if (!isAdmin) {
+    setRtStatus(true, "מחובר ל-DB: כן (מילוי בלבד)");
+    return;
+  }
+
+  initCharts();
+
+  const q = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
+  onSnapshot(q, (snap) => {
+    setRtStatus(true, "מחובר ל-DB: כן (Admin)");
+
+    const rows = [];
+    snap.forEach(d => {
+      const data = d.data();
+      rows.push({
+        id: d.id,
+        ...data,
+        sector: data.sector ?? "אחר",
+        fillerName: data.fillerName ?? "",
+        houseSite: data.houseSite ?? "",
+        eventTimeISO: data.eventTimeISO ?? null,
+        eventTimeLocal: data.eventTimeLocal ?? "",
+        gps: data.gps ?? null,
+        status: {
+          hasAttachment: !!data?.status?.hasAttachment,
+          attachmentCount: safeNum(data?.status?.attachmentCount, 0),
+          weaponScan: !!data?.status?.weaponScan,
+          mapping: !!data?.status?.mapping,
+          detention: data?.status?.detention ?? "ללא"
+        },
+        notes: data.notes ?? ""
+      });
+    });
+
+    liveRows = rows;
+    renderDashboard(rows);
+    renderRecords(rows);
+  }, (err) => {
+    console.error(err);
+    setRtStatus(false, "מחובר ל-DB: שגיאה (בדוק הרשאות)");
+  });
+}
+
+// קובע האם המשתמש אדמין ואז מפעיל listener רק לאדמין
+onAuthStateChanged(auth, async (u) => {
+  console.log("AUTH:", u ? u.uid : "NO USER");
+
+  if (!u) {
+    isAdmin = false;
+    setAdminUI(false);
+    setRtStatus(false, "מחובר ל-DB: לא מחובר");
+    return;
+  }
+
+  isAdmin = await checkIsAdmin(u.uid);
+  console.log("isAdmin:", isAdmin);
+
+  setAdminUI(isAdmin);
+
+  // מפעיל real-time listener בהתאם להרשאות
+  startRealtimeListener();
+});
+```
