@@ -32,7 +32,55 @@ const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפו
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+let isAdmin = false;
 
+async function checkIsAdmin(uid) {
+  try {
+    const snap = await getDoc(doc(db, "admins", uid));
+    return snap.exists();
+  } catch (e) {
+    console.error("Admin check failed:", e);
+    return false;
+  }
+}
+
+async function promptAdminLogin() {
+  const email = prompt("Admin Email:");
+  if (!email) return false;
+
+  const password = prompt("Password:");
+  if (!password) return false;
+
+  try {
+    await signInWithEmailAndPassword(auth, email.trim(), password);
+    return true;
+  } catch (e) {
+    console.error(e);
+    alert("התחברות נכשלה");
+    return false;
+  }
+}
+
+async function ensureAdminOrLogin() {
+  // כבר אדמין
+  if (isAdmin) return true;
+
+  // אם אין יוזר / או לא אדמין – ננסה התחברות
+  const ok = await promptAdminLogin();
+  if (!ok) return false;
+
+  // נחכה לעדכון auth ואז נוודא admin
+  const u = auth.currentUser;
+  if (!u) return false;
+
+  isAdmin = await checkIsAdmin(u.uid);
+  if (!isAdmin) {
+    alert("המשתמש מחובר אך אינו מוגדר כאדמין");
+    await signOut(auth);
+    return false;
+  }
+  return true;
+}
 // ===================== UI HELPERS =====================
 const $ = (id) => document.getElementById(id);
 
@@ -162,17 +210,10 @@ document.querySelectorAll(".tab").forEach(btn => {
 
     const tab = btn.dataset.tab;
 
-    // Gate רק לדשבורד/רשומות
-    if ((tab === "dashboard" || tab === "records") && !isAdmin) {
-      const ok = await promptAdminLogin();
-      if (!ok) return; // המשתמש ביטל/נכשל
-
-      // נחכה רגע ל-onAuthStateChanged שיעדכן isAdmin
-      // ואז נבדוק שוב
-      if (!isAdmin) {
-        alert("אין הרשאת Admin");
-        return;
-      }
+    // אם מנסים להיכנס לדשבורד/רשומות – נדרוש אדמין
+    if (tab === "dashboard" || tab === "records") {
+      const ok = await ensureAdminOrLogin();
+      if (!ok) return;
     }
 
     document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
