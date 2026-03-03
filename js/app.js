@@ -157,8 +157,8 @@ function setAdminUI(admin) {
   const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
   const recTabBtn  = document.querySelector(`.tab[data-tab="records"]`);
 
-  if (dashTabBtn) dashTabBtn.style.display = admin ? "" : "none";
-  if (recTabBtn)  recTabBtn.style.display  = admin ? "" : "none";
+if (dashTabBtn) dashTabBtn.style.display = "";
+if (recTabBtn)  recTabBtn.style.display  = "";
 
   // אם לא אדמין והוא נמצא במסך דשבורד/רשומות — נחזיר למסך טופס
   if (!admin) {
@@ -173,16 +173,6 @@ if (active === "dashboard" || active === "records") {
   }
 }
 
-async function checkIsAdmin(uid) {
-  try {
-    const ref = doc(db, "admins", uid);
-    const snap = await getDoc(ref);
-    return snap.exists();
-  } catch (e) {
-    console.error("Admin check failed:", e);
-    return false;
-  }
-}
 
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach(btn => {
