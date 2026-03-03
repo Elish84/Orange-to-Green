@@ -133,27 +133,7 @@ function escapeHtml(str) {
 }
 
 // ===================== AUTH (Anonymous) =====================
-// חובה: להפעיל Anonymous ב-Firebase Console → Authentication → Sign-in method
-signInAnonymously(auth).catch((err) => {
-  console.error("Anonymous sign-in failed:", err);
-});
 
-let isAdmin = false;
-async function promptAdminLogin() {
-  const email = prompt("Admin Email:");
-  if (!email) return false;
-  const password = prompt("Password:");
-  if (!password) return false;
-
-  try {
-    await signInWithEmailAndPassword(auth, email.trim(), password);
-    return true;
-  } catch (e) {
-    console.error(e);
-    alert("התחברות נכשלה");
-    return false;
-  }
-}
 
 async function logoutAdmin() {
   try { await signOut(auth); } catch (e) { console.error(e); }
