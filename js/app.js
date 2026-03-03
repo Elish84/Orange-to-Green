@@ -628,4 +628,4 @@ onAuthStateChanged(auth, async (u) => {
   // מפעיל real-time listener בהתאם להרשאות
   startRealtimeListener();
 });
-```
+
