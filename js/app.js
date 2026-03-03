@@ -51,7 +51,7 @@ function toDatetimeLocalValue(date) {
   const dd = pad(date.getDate());
   const hh = pad(date.getHours());
   const mi = pad(date.getMinutes());
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+ return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
 function parseDatetimeLocalToISO(dtLocal) {
