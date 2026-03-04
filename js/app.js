@@ -153,25 +153,26 @@ function setRtStatus(ok, text) {
 }
 
 function setAdminUI(admin) {
-  // הסתרת טאבים/מסכים למי שלא אדמין (כדי לא לקבל PERMISSION errors)
   const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
   const mapTabBtn  = document.querySelector(`.tab[data-tab="map"]`);
   const recTabBtn  = document.querySelector(`.tab[data-tab="records"]`);
 
-  if (dashTabBtn) dashTabBtn.style.display = admin ? "" : "none";
-  if (mapTabBtn)  mapTabBtn.style.display  = admin ? "" : "none";
-  if (recTabBtn)  recTabBtn.style.display  = admin ? "" : "none";
+  // תמיד להציג — רק לסמן נעול כשלא אדמין
+  [dashTabBtn, mapTabBtn, recTabBtn].forEach(btn => {
+    if (!btn) return;
+    btn.style.display = ""; // לא להסתיר!
+    btn.classList.toggle("locked", !admin);
+  });
 
-  // אם לא אדמין והוא נמצא במסך דשבורד/רשומות — נחזיר למסך טופס
+  // אם לא אדמין והוא כבר נמצא בדשבורד/רשומות/מפה — נחזיר לטופס
   if (!admin) {
     const activeEl = document.querySelector(".tab.active");
-const active = (activeEl && activeEl.dataset) ? activeEl.dataset.tab : null;
+    const active = (activeEl && activeEl.dataset) ? activeEl.dataset.tab : null;
 
-if (active === "dashboard" || active === "records" || active === "map") {
-  const formBtn = document.querySelector('.tab[data-tab="form"]');
-  if (formBtn) formBtn.click();
-}
-    
+    if (active === "dashboard" || active === "records" || active === "map") {
+      const formBtn = document.querySelector('.tab[data-tab="form"]');
+      if (formBtn) formBtn.click();
+    }
   }
 }
 
