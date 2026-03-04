@@ -145,7 +145,11 @@ textarea{resize:vertical}
 .btn.ghost{
   background: transparent;
 }
-
+.tab.locked::after {
+  content: " 🔒";
+  opacity: 0.85;
+  font-size: 0.95em;
+}
 .gpsRow{display:flex; gap:8px; flex-wrap:wrap}
 .gpsPreview{
   margin-top:10px;
