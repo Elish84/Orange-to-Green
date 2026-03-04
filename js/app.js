@@ -1,3 +1,4 @@
+// app.js
 
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -7,13 +8,16 @@ import {
   collection,
   addDoc,
   doc,
+  setDoc,
   updateDoc,
   deleteDoc,
   onSnapshot,
   query,
   orderBy,
   serverTimestamp,
-  getDoc
+  getDoc,
+  getDocs,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import {
@@ -26,6 +30,7 @@ import {
 
 // ===================== CONFIG =====================
 const COLLECTION_NAME = "houseScans";
+const TARGETS_COLLECTION = "houseTargets"; // ✅ Targets from map stored in Firestore
 const SECTORS = ["א'","ב'","ג'","מסייעת","גדוד","אחר"];
 const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפונית","עצור"];
 
@@ -88,6 +93,7 @@ async function ensureAdminOrLogin() {
   }
   return true;
 }
+
 // ===================== UI HELPERS =====================
 const $ = (id) => document.getElementById(id);
 
@@ -107,7 +113,7 @@ function toDatetimeLocalValue(date) {
   const dd = pad(date.getDate());
   const hh = pad(date.getHours());
   const mi = pad(date.getMinutes());
- return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
 function parseDatetimeLocalToISO(dtLocal) {
@@ -139,12 +145,11 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
-// ===================== AUTH (Anonymous) =====================
-
-
+// ===================== AUTH =====================
 async function logoutAdmin() {
   try { await signOut(auth); } catch (e) { console.error(e); }
 }
+
 // UI indicators (optional, but useful)
 function setRtStatus(ok, text) {
   const rtEl = $("rtStatus");
@@ -170,7 +175,7 @@ function setAdminUI(admin) {
     btn.classList.toggle("locked", !admin);
   });
 
-  // אם לא אדמין והוא כבר נמצא בדשבורד/רשומות/מפה — נחזיר לטופס
+  // אם לא אדמין והוא כבר נמצא בדשבורד/רשומות — נחזיר לטופס
   if (!admin) {
     const activeEl = document.querySelector(".tab.active");
     const active = (activeEl && activeEl.dataset) ? activeEl.dataset.tab : null;
@@ -181,7 +186,6 @@ function setAdminUI(admin) {
     }
   }
 }
-
 
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach(btn => {
@@ -237,7 +241,7 @@ function computeDotSize() {
   const size = m.getSize?.() ?? { x: 900, y: 600 };
   // יחסית לגודל המסך + מעט תלוי זום, כדי להישאר פרופורציונלי ולא להשתלט.
   const base = Math.min(size.x, size.y);
-  const byScreen = Math.round(base / 240);   // 600px -> ~2-3, 1000px -> ~4
+  const byScreen = Math.round(base / 240);
   const byZoom = Math.round((z - 8) * 0.6);
   return clamp(4 + byScreen + byZoom, 4, 10);
 }
@@ -300,18 +304,24 @@ function updateAllMarkerIcons() {
   });
 }
 
-// ===================== HOUSE TARGETS (Loaded list) =====================
+// ===================== HOUSE TARGETS =====================
+// ✅ targets are now stored in Firestore; localStorage remains only as fallback
 const TARGETS_STORAGE_KEY = "o2g_house_targets_v1";
 const COMPLETED_STORAGE_KEY = "o2g_house_targets_completed_v1";
 
-let houseTargets = []; // [{ houseSite, lat, lng }]
+let houseTargets = []; // [{ houseSite, lat, lng }]  (source of truth: Firestore listener)
 let completedHouseSites = new Set();
 
 function normalizeKey(s) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
-function loadFromStorage() {
+function safeDocIdFromHouseSite(houseSite) {
+  const key = normalizeKey(houseSite);
+  return key.replace(/[^a-z0-9_-]/g, "_");
+}
+
+function loadFromStorageFallback() {
   try {
     const rawT = localStorage.getItem(TARGETS_STORAGE_KEY);
     if (rawT) houseTargets = JSON.parse(rawT) || [];
@@ -328,7 +338,7 @@ function loadFromStorage() {
   }
 }
 
-function saveTargetsToStorage() {
+function saveTargetsToStorageFallback() {
   try {
     localStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(houseTargets));
   } catch (_) {}
@@ -399,6 +409,70 @@ async function readFileAsText(file) {
   });
 }
 
+// ✅ Firestore targets realtime listener (for all users)
+let targetsUnsub = null;
+
+function startTargetsListener() {
+  if (targetsUnsub) {
+    try { targetsUnsub(); } catch (_) {}
+    targetsUnsub = null;
+  }
+
+  const qy = query(collection(db, TARGETS_COLLECTION), orderBy("updatedAt", "desc"));
+
+  targetsUnsub = onSnapshot(qy, (snap) => {
+    const arr = [];
+    snap.forEach((d) => {
+      const t = d.data();
+      if (t?.houseSite && Number.isFinite(t?.lat) && Number.isFinite(t?.lng)) {
+        arr.push({ houseSite: t.houseSite, lat: t.lat, lng: t.lng });
+      }
+    });
+
+    houseTargets = arr;
+    mapState.hasFit = false;
+    renderTargetsOnMap(true);
+
+    // store fallback copy (optional)
+    try { saveTargetsToStorageFallback(); } catch (_) {}
+  }, (err) => {
+    console.error("Targets listener error:", err);
+    // fallback: show whatever local storage has
+    setTargetsToast("bad", "שגיאה בטעינת איתורים מה-DB (בדוק הרשאות). מוצג גיבוי מקומי.");
+    loadFromStorageFallback();
+    mapState.hasFit = false;
+    renderTargetsOnMap(true);
+  });
+}
+
+// ✅ Bulk write targets parsed from paste/file into Firestore (upsert by houseSite)
+async function upsertTargetsToFirestore(targets) {
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  for (const t of targets) {
+    const docId = safeDocIdFromHouseSite(t.houseSite);
+    const ref = doc(db, TARGETS_COLLECTION, docId);
+    batch.set(ref, {
+      houseSite: t.houseSite,
+      lat: t.lat,
+      lng: t.lng,
+      updatedAt: now,
+      createdAt: now
+    }, { merge: true });
+  }
+
+  await batch.commit();
+}
+
+// ✅ Clear all targets (admin-only in rules recommended)
+async function clearAllTargetsFirestore() {
+  const snap = await getDocs(collection(db, TARGETS_COLLECTION));
+  const batch = writeBatch(db);
+  snap.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
 function initTargetsUI() {
   hydrateTemplateLink();
 
@@ -424,24 +498,32 @@ function initTargetsUI() {
     // Dedup by houseSite key
     const map = new Map();
     for (const x of parsed) map.set(normalizeKey(x.houseSite), x);
-    houseTargets = Array.from(map.values());
-    saveTargetsToStorage();
-    mapState.hasFit = false;
-    renderTargetsOnMap(true);
-    setTargetsToast("ok", `נטענו ${houseTargets.length} איתורים ✅`);
+    const dedup = Array.from(map.values());
+
+    try {
+      await upsertTargetsToFirestore(dedup);
+      setTargetsToast("ok", `נטענו ${dedup.length} איתורים ל-DB ✅`);
+      // ה-onSnapshot יעדכן את המפה
+    } catch (e) {
+      console.error(e);
+      setTargetsToast("bad", "שגיאה בכתיבה ל-DB (בדוק הרשאות)");
+    }
   });
 
-  $("btnClearTargets")?.addEventListener("click", () => {
-    houseTargets = [];
-    saveTargetsToStorage();
-    mapState.hasFit = false;
-    renderTargetsOnMap(true);
-    setTargetsToast("ok", "הרשימה נוקתה");
-  });
+  $("btnClearTargets")?.addEventListener("click", async () => {
+    const ok = confirm("למחוק את כל האיתורים מהמפה (DB)?");
+    if (!ok) return;
 
+    try {
+      await clearAllTargetsFirestore();
+      setTargetsToast("ok", "כל האיתורים נמחקו מה-DB");
+      // ה-onSnapshot יעדכן את המפה
+    } catch (e) {
+      console.error(e);
+      setTargetsToast("bad", "שגיאה במחיקה (בדוק הרשאות)");
+    }
+  });
 }
-
-
 
 // ===================== MAP: ADD TARGETS MODE (Click to add) =====================
 function setAddModeUI(active) {
@@ -493,7 +575,8 @@ function enterAddTargetsMode() {
     try { mapState.map.off("click", mapState._addClickHandler); } catch (_) {}
   }
 
-  mapState._addClickHandler = (e) => {
+  // ✅ Save to Firestore so everyone sees it
+  mapState._addClickHandler = async (e) => {
     if (!mapState.addMode) return;
     const lat = Number(e?.latlng?.lat);
     const lng = Number(e?.latlng?.lng);
@@ -504,19 +587,27 @@ function enterAddTargetsMode() {
     houseSite = String(houseSite).trim();
     if (!houseSite) return;
 
-    const key = normalizeKey(houseSite);
-    if (!key) return;
+    const docId = safeDocIdFromHouseSite(houseSite);
 
-    // Upsert
-    const idx = (houseTargets || []).findIndex(x => normalizeKey(x?.houseSite) === key);
-    const rec = { houseSite, lat, lng };
-    if (idx >= 0) houseTargets[idx] = rec;
-    else houseTargets.push(rec);
+    try {
+      await setDoc(
+        doc(db, TARGETS_COLLECTION, docId),
+        {
+          houseSite,
+          lat,
+          lng,
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp()
+        },
+        { merge: true }
+      );
 
-    saveTargetsToStorage();
-    mapState.hasFit = false;
-    renderTargetsOnMap(false);
-    setTargetsToast("ok", `נוסף איתור ${houseSite} ✅`);
+      setTargetsToast("ok", `נוסף איתור ${houseSite} ✅`);
+      // ה-onSnapshot יעדכן את המפה לכל המשתמשים
+    } catch (err) {
+      console.error("Failed to save target:", err);
+      setTargetsToast("bad", "שגיאה בשמירה ל-DB (בדוק הרשאות Firestore)");
+    }
   };
 
   mapState.map.on("click", mapState._addClickHandler);
@@ -769,7 +860,6 @@ function initCharts() {
   if (!c1 || !c2) return;
   if (typeof Chart === "undefined") return;
 
-  // Chart.js requires destroying an existing chart before reusing the same canvas.
   try {
     if (chartBySector) { chartBySector.destroy(); chartBySector = null; }
   } catch (_) { chartBySector = null; }
@@ -1069,8 +1159,8 @@ function startRealtimeListener() {
 
   initCharts();
 
-  const q = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
-  rtUnsub = onSnapshot(q, (snap) => {
+  const qy = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
+  rtUnsub = onSnapshot(qy, (snap) => {
     setRtStatus(true, "מחובר ל-DB: כן (Admin)");
 
     const rows = [];
@@ -1101,7 +1191,6 @@ function startRealtimeListener() {
     renderRecords(rows);
 
     // אופציונלי: אם אדמין צופה במפה — נסמן כחול כל איתור שיש לו רשומה.
-    // זה מאפשר "כחול" להיות משותף לצוות (תלוי בהרשאות Firestore לקריאה).
     try {
       rows.forEach(r => { if (r?.houseSite) completedHouseSites.add(normalizeKey(r.houseSite)); });
       saveCompletedToStorage();
@@ -1129,19 +1218,24 @@ onAuthStateChanged(auth, async (u) => {
 
   setAdminUI(isAdmin);
 
-  // מפעיל real-time listener בהתאם להרשאות
+  // ✅ Targets from Firestore for everyone
+  startTargetsListener();
+
+  // מפעיל real-time listener בהתאם להרשאות (Admin only)
   startRealtimeListener();
 });
 
 // Init map + targets UI after all scripts (Leaflet) are ready
 window.addEventListener("load", () => {
-  loadFromStorage();
+  // fallback only (completed + fallback targets)
+  loadFromStorageFallback();
+
   initTargetsUI();
   initAddTargetsModeUI();
   initMapIfNeeded();
+
   window.setTimeout(() => {
     try { mapState?.map?.invalidateSize?.(); } catch (_) {}
-    renderTargetsOnMap(true);
+    renderTargetsOnMap(true); // shows fallback until Firestore listener returns
   }, 80);
 });
-
