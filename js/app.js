@@ -1,4 +1,4 @@
-
+javascript
 import { firebaseConfig } from "./firebase-config.js";
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -85,6 +85,7 @@ async function ensureAdminOrLogin() {
   }
   return true;
 }
+
 // ===================== UI HELPERS =====================
 const $ = (id) => document.getElementById(id);
 
@@ -104,7 +105,7 @@ function toDatetimeLocalValue(date) {
   const dd = pad(date.getDate());
   const hh = pad(date.getHours());
   const mi = pad(date.getMinutes());
- return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
 function parseDatetimeLocalToISO(dtLocal) {
@@ -152,6 +153,7 @@ ensureSignedIn();
 async function logoutAdmin() {
   try { await signOut(auth); } catch (e) { console.error(e); }
 }
+
 // UI indicators (optional, but useful)
 function setRtStatus(ok, text) {
   const rtEl = $("rtStatus");
@@ -192,7 +194,6 @@ function setAdminUI(admin) {
   }
 }
 
-
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach(btn => {
   btn.addEventListener("click", async () => {
@@ -218,16 +219,16 @@ document.querySelectorAll(".tab").forEach(btn => {
       window.setTimeout(() => {
         try { mapState?.map?.invalidateSize?.(); } catch (_) {}
       }, 80);
+
       // אם כבר יש דאטה מה-listener, נצייר מיד
-      if (Array.isArray(liveRows) && liveRows.length) {
-        renderMap(liveRows);
-      }
+      // עדיפות ל-mapRows (public pins)
+      if (Array.isArray(mapRows) && mapRows.length) renderMap(mapRows);
+      else if (Array.isArray(liveRows) && liveRows.length) renderMap(liveRows);
     }
   });
 });
 
 // ===================== MAP (Leaflet + Esri World Imagery) =====================
-// נבנה רק לאדמין (הטאב גם מוסתר למי שלא אדמין)
 const mapState = {
   map: null,
   cluster: null,
@@ -308,9 +309,6 @@ function updateAllMarkerIcons() {
 }
 
 function renderMap(rows) {
-  // רק אדמין
- // if (!isAdmin) return;
-
   const totalEl = document.getElementById("mapTotal");
   const valid = (rows || []).filter(r => {
     const lat = r?.gps?.lat;
@@ -901,10 +899,10 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
       await setDoc(
         doc(db, MAP_COLLECTION, refineState.docId),
         {
-          sector: currentEditRow?.sector,
-          houseSite: currentEditRow?.houseSite,
-          eventTimeISO: currentEditRow?.eventTimeISO,
-          eventTimeLocal: currentEditRow?.eventTimeLocal,
+          sector: currentEditRow?.sector ?? "אחר",
+          houseSite: currentEditRow?.houseSite ?? "",
+          eventTimeISO: currentEditRow?.eventTimeISO ?? null,
+          eventTimeLocal: currentEditRow?.eventTimeLocal ?? "",
           gps: patch.gps,
           updatedAt: serverTimestamp()
         },
@@ -913,6 +911,7 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
     } catch (e2) {
       console.warn("Failed to update public pin:", e2);
     }
+
     if (toast) setToast(toast, "ok", "מיקום עודכן ✅");
 
     // עדכון מיידי ב-UI (גם לפני ה-snapshot הבא)
@@ -987,7 +986,6 @@ $("editForm")?.addEventListener("submit", async (e) => {
           houseSite: patch.houseSite,
           eventTimeISO: patch.eventTimeISO,
           eventTimeLocal: patch.eventTimeLocal,
-          // gps is not edited in this form; keep existing in pin
           updatedAt: serverTimestamp()
         },
         { merge: true }
@@ -995,6 +993,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
     } catch (e2) {
       console.warn("Failed to update public pin:", e2);
     }
+
     if (toast) setToast(toast, "ok", "עודכן ✅");
     window.setTimeout(closeModal, 650);
   } catch (err) {
@@ -1013,6 +1012,48 @@ function stopListeners() {
   try { unsubMap?.(); } catch (_) {}
   unsubAdmin = null;
   unsubMap = null;
+}
+
+/**
+ * Backfill: מסנכרן מסמכים קיימים מ-houseScans אל mapPins,
+ * כדי שמשתמשים לא-אדמין יראו גם נתונים "ישנים" במפה.
+ * רץ רק לאדמין.
+ */
+let _backfillRunning = false;
+async function backfillMapPinsFromHouseScans(rows) {
+  if (!isAdmin) return;
+  if (_backfillRunning) return; // הגנה מפני ריצה מקבילית
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  _backfillRunning = true;
+  try {
+    let count = 0;
+
+    for (const r of rows) {
+      if (!r?.id) continue;
+
+      // pin ציבורי מינימלי
+      const pin = {
+        sector: r.sector ?? "אחר",
+        houseSite: r.houseSite ?? "",
+        eventTimeISO: r.eventTimeISO ?? null,
+        eventTimeLocal: r.eventTimeLocal ?? "",
+        gps: r.gps ?? null,
+        updatedAt: serverTimestamp()
+      };
+
+      try {
+        await setDoc(doc(db, MAP_COLLECTION, r.id), pin, { merge: true });
+        count++;
+      } catch (e) {
+        console.warn("backfill pin failed:", r.id, e);
+      }
+    }
+
+    console.log("backfillMapPinsFromHouseScans done:", count);
+  } finally {
+    _backfillRunning = false;
+  }
 }
 
 function startPublicMapListener() {
@@ -1034,6 +1075,7 @@ function startPublicMapListener() {
       });
     });
     mapRows = rows;
+
     // מפה חופשית לכולם
     renderMap(rows);
   }, (err) => {
@@ -1079,12 +1121,18 @@ function startAdminListener() {
     });
 
     liveRows = rows;
-    // נשאיר גם mapRows מעודכן — לשימוש ב"דייק מיקום"
-    mapRows = rows;
+
+    // ✅ Backfill: ודא שכל הרשומות קיימות גם ב-mapPins (לציבור)
+    backfillMapPinsFromHouseScans(rows);
 
     renderDashboard(rows);
     renderRecords(rows);
-    renderMap(rows);
+
+    // אדמין יכול לראות גם את mapPins וגם את houseScans;
+    // כדי לא "לבלבל", נצייר במפה לפי mapRows (הציבורי) אם יש.
+    if (Array.isArray(mapRows) && mapRows.length) renderMap(mapRows);
+    else renderMap(rows);
+
   }, (err) => {
     console.error(err);
     setRtStatus(false, "מחובר ל-DB: שגיאה (בדוק הרשאות)");
