@@ -309,7 +309,7 @@ function updateAllMarkerIcons() {
 
 function renderMap(rows) {
   // רק אדמין
-  if (!isAdmin) return;
+ // if (!isAdmin) return;
 
   const totalEl = document.getElementById("mapTotal");
   const valid = (rows || []).filter(r => {
