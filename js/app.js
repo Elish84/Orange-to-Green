@@ -1,4 +1,4 @@
-
+```javascript
 import { firebaseConfig } from "./firebase-config.js";
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -90,12 +90,14 @@ async function ensureAdminOrLogin() {
 const $ = (id) => document.getElementById(id);
 
 function setToast(el, type, msg) {
-  el.classList.remove("ok","bad");
+  el.classList.remove("ok", "bad");
   el.classList.add(type);
   el.textContent = msg;
   el.style.display = "block";
   window.clearTimeout(el._t);
-  el._t = window.setTimeout(() => { el.style.display = "none"; }, 2800);
+  el._t = window.setTimeout(() => {
+    el.style.display = "none";
+  }, 2800);
 }
 
 function toDatetimeLocalValue(date) {
@@ -113,15 +115,21 @@ function parseDatetimeLocalToISO(dtLocal) {
   return d.toISOString();
 }
 
-function safeNum(x, def=0) {
+function safeNum(x, def = 0) {
   const n = Number(x);
   return Number.isFinite(n) ? n : def;
 }
 
 function fmtShortTime(isoOrDate) {
-  const d = (isoOrDate instanceof Date) ? isoOrDate : new Date(isoOrDate);
+  const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("he-IL", { year:"2-digit", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+  return d.toLocaleString("he-IL", {
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function normalizeText(s) {
@@ -129,7 +137,8 @@ function normalizeText(s) {
 }
 
 function escapeHtml(str) {
-  return (str ?? "").toString()
+  return (str ?? "")
+    .toString()
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -151,7 +160,11 @@ async function ensureSignedIn() {
 ensureSignedIn();
 
 async function logoutAdmin() {
-  try { await signOut(auth); } catch (e) { console.error(e); }
+  try {
+    await signOut(auth);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 // UI indicators (optional, but useful)
@@ -170,11 +183,11 @@ function setRtStatus(ok, text) {
 
 function setAdminUI(admin) {
   const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
-  const mapTabBtn  = document.querySelector(`.tab[data-tab="map"]`);
-  const recTabBtn  = document.querySelector(`.tab[data-tab="records"]`);
+  const mapTabBtn = document.querySelector(`.tab[data-tab="map"]`);
+  const recTabBtn = document.querySelector(`.tab[data-tab="records"]`);
 
   // תמיד להציג
-  [dashTabBtn, mapTabBtn, recTabBtn].forEach(btn => {
+  [dashTabBtn, mapTabBtn, recTabBtn].forEach((btn) => {
     if (!btn) return;
     btn.style.display = ""; // לא להסתיר!
     // דשבורד + רשומות נעולים ללא אדמין. המפה חופשית לכולם.
@@ -185,7 +198,7 @@ function setAdminUI(admin) {
   // אם לא אדמין והוא כבר נמצא בדשבורד/רשומות — נחזיר לטופס
   if (!admin) {
     const activeEl = document.querySelector(".tab.active");
-    const active = (activeEl && activeEl.dataset) ? activeEl.dataset.tab : null;
+    const active = activeEl && activeEl.dataset ? activeEl.dataset.tab : null;
 
     if (active === "dashboard" || active === "records") {
       const formBtn = document.querySelector('.tab[data-tab="form"]');
@@ -195,9 +208,8 @@ function setAdminUI(admin) {
 }
 
 // ===================== TABS =====================
-document.querySelectorAll(".tab").forEach(btn => {
+document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", async () => {
-
     const tab = btn.dataset.tab;
 
     // אם מנסים להיכנס לדשבורד/רשומות – נדרוש אדמין
@@ -207,23 +219,25 @@ document.querySelectorAll(".tab").forEach(btn => {
       if (!ok) return;
     }
 
-    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
     btn.classList.add("active");
 
-    document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
+    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("show"));
     document.getElementById(`tab-${tab}`)?.classList.add("show");
 
     // Leaflet חייב invalidateSize אחרי שהאלמנט נהיה גלוי
     if (tab === "map") {
       initMapIfNeeded();
       window.setTimeout(() => {
-        try { mapState?.map?.invalidateSize?.(); } catch (_) {}
+        try {
+          mapState?.map?.invalidateSize?.();
+        } catch (_) {}
       }, 80);
 
       // אם כבר יש דאטה מה-listener, נצייר מיד
       // עדיפות ל-mapRows (public pins)
       if (Array.isArray(mapRows) && mapRows.length) renderMap(mapRows);
-      else if (Array.isArray(liveRows) && liveRows.length) renderMap(liveRows);
+      else renderMap([]); // ✅ כדי שיראה 0 אם אין pins ציבוריים
     }
   });
 });
@@ -236,7 +250,9 @@ const mapState = {
   hasFit: false
 };
 
-function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
 
 function computeDotSize() {
   const m = mapState.map;
@@ -245,7 +261,7 @@ function computeDotSize() {
   const size = m.getSize?.() ?? { x: 900, y: 600 };
   // יחסית לגודל המסך + מעט תלוי זום, כדי להישאר פרופורציונלי ולא להשתלט.
   const base = Math.min(size.x, size.y);
-  const byScreen = Math.round(base / 240);   // 600px -> ~2-3, 1000px -> ~4
+  const byScreen = Math.round(base / 240); // 600px -> ~2-3, 1000px -> ~4
   const byZoom = Math.round((z - 8) * 0.6);
   return clamp(4 + byScreen + byZoom, 4, 10);
 }
@@ -273,13 +289,10 @@ function initMapIfNeeded() {
   }).setView([31.7, 35.2], 9);
 
   // Esri World Imagery
-  L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      maxZoom: 19,
-      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
-    }
-  ).addTo(m);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19,
+    attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+  }).addTo(m);
 
   L.control.scale({ imperial: false }).addTo(m);
 
@@ -304,13 +317,15 @@ function updateAllMarkerIcons() {
   const px = computeDotSize();
   const icon = makeDotIcon(px);
   mapState.markerById.forEach((marker) => {
-    try { marker.setIcon(icon); } catch (_) {}
+    try {
+      marker.setIcon(icon);
+    } catch (_) {}
   });
 }
 
 function renderMap(rows) {
   const totalEl = document.getElementById("mapTotal");
-  const valid = (rows || []).filter(r => {
+  const valid = (rows || []).filter((r) => {
     const lat = r?.gps?.lat;
     const lng = r?.gps?.lng;
     return Number.isFinite(lat) && Number.isFinite(lng);
@@ -321,7 +336,7 @@ function renderMap(rows) {
   // אם המפה עוד לא מאותחלת (לא נכנסו לטאב) — אין מה לצייר כרגע
   if (!mapState.map || !mapState.cluster) return;
 
-  const idSet = new Set(valid.map(r => r.id));
+  const idSet = new Set(valid.map((r) => r.id));
 
   // מחיקה של נקודות שנעלמו
   for (const [id, marker] of mapState.markerById.entries()) {
@@ -358,9 +373,9 @@ function renderMap(rows) {
     const popupHtml = `
       <div style="min-width:220px; font-family:system-ui;">
         <div style="font-weight:900; margin-bottom:6px;">איתור בית: ${escapeHtml(houseSite)}</div>
-        <div style="opacity:.85; font-size:12px;">זמן: ${escapeHtml(fmtShortTime(r.eventTimeISO || r.eventTimeLocal || ''))}</div>
-        <div style="opacity:.85; font-size:12px;">גזרה: ${escapeHtml(r.sector || '—')}</div>
-        <div style="opacity:.85; font-size:12px;">ממלא: ${escapeHtml(r.fillerName || '—')}</div>
+        <div style="opacity:.85; font-size:12px;">זמן: ${escapeHtml(fmtShortTime(r.eventTimeISO || r.eventTimeLocal || ""))}</div>
+        <div style="opacity:.85; font-size:12px;">גזרה: ${escapeHtml(r.sector || "—")}</div>
+        <div style="opacity:.85; font-size:12px;">ממלא: ${escapeHtml(r.fillerName || "—")}</div>
         <div style="opacity:.8; font-size:12px; margin-top:6px;">Lat/Lng: ${escapeHtml(lat)}, ${escapeHtml(lng)}</div>
       </div>`;
     marker.bindPopup(popupHtml);
@@ -408,7 +423,7 @@ $("hasAttachment")?.addEventListener("change", (e) => {
 
 let currentGPS = null;
 
-function setGPSStatus(text, muted=false) {
+function setGPSStatus(text, muted = false) {
   const el = $("gpsStatus");
   if (!el) return;
   el.textContent = `GPS: ${text}`;
@@ -416,7 +431,9 @@ function setGPSStatus(text, muted=false) {
 }
 
 function renderGPSPreview(gps) {
-  const lat = $("latVal"), lng = $("lngVal"), acc = $("accVal");
+  const lat = $("latVal"),
+    lng = $("lngVal"),
+    acc = $("accVal");
   if (lat) lat.textContent = gps?.lat ?? "—";
   if (lng) lng.textContent = gps?.lng ?? "—";
   if (acc) acc.textContent = gps?.accuracy ?? "—";
@@ -550,18 +567,23 @@ function initCharts() {
 }
 
 function computeAggregates(rows) {
-  const bySector = Object.fromEntries(SECTORS.map(s => [s, {
-    total: 0,
-    weapon: 0,
-    attachments: 0,
-    detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map(x => [x, 0]))
-  }]));
+  const bySector = Object.fromEntries(
+    SECTORS.map((s) => [
+      s,
+      {
+        total: 0,
+        weapon: 0,
+        attachments: 0,
+        detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map((x) => [x, 0]))
+      }
+    ])
+  );
 
   const overall = {
     total: 0,
     weapon: 0,
     attachments: 0,
-    detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map(x => [x, 0]))
+    detentionCounts: Object.fromEntries(DETENTION_OPTIONS.map((x) => [x, 0]))
   };
 
   for (const r of rows) {
@@ -571,7 +593,10 @@ function computeAggregates(rows) {
     bySector[s].total += 1;
     overall.total += 1;
 
-    if (r.status.weaponScan) { bySector[s].weapon += 1; overall.weapon += 1; }
+    if (r.status.weaponScan) {
+      bySector[s].weapon += 1;
+      overall.weapon += 1;
+    }
 
     if (r.status.hasAttachment) {
       const cnt = Math.max(0, safeNum(r.status.attachmentCount, 0));
@@ -599,12 +624,12 @@ function renderDashboard(rows) {
   $("lastUpdate").textContent = fmtShortTime(new Date());
 
   if (chartBySector) {
-    chartBySector.data.datasets[0].data = SECTORS.map(s => bySector[s].total);
+    chartBySector.data.datasets[0].data = SECTORS.map((s) => bySector[s].total);
     chartBySector.update();
   }
 
   if (chartDetention) {
-    chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map(k => overall.detentionCounts[k] ?? 0);
+    chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map((k) => overall.detentionCounts[k] ?? 0);
     chartDetention.update();
   }
 
@@ -613,9 +638,7 @@ function renderDashboard(rows) {
     wrap.innerHTML = "";
     for (const s of SECTORS) {
       const ag = bySector[s];
-      const detTop = DETENTION_OPTIONS
-        .map(k => ({ k, v: ag.detentionCounts[k] ?? 0 }))
-        .sort((a,b) => b.v - a.v)[0];
+      const detTop = DETENTION_OPTIONS.map((k) => ({ k, v: ag.detentionCounts[k] ?? 0 })).sort((a, b) => b.v - a.v)[0];
 
       const el = document.createElement("div");
       el.className = "sectorCard";
@@ -649,13 +672,10 @@ function renderRecords(rows) {
   const qText = normalizeText($("searchBox")?.value);
   const sectorFilter = $("sectorFilter")?.value;
 
-  const filtered = rows.filter(r => {
+  const filtered = rows.filter((r) => {
     if (sectorFilter && r.sector !== sectorFilter) return false;
     if (!qText) return true;
-    const hay = [
-      r.fillerName, r.sector, r.houseSite,
-      r.status?.detention, r.notes
-    ].map(normalizeText).join(" | ");
+    const hay = [r.fillerName, r.sector, r.houseSite, r.status?.detention, r.notes].map(normalizeText).join(" | ");
     return hay.includes(qText);
   });
 
@@ -673,7 +693,7 @@ function renderRecords(rows) {
       <td>${escapeHtml(r.sector)}</td>
       <td>${escapeHtml(r.houseSite)}</td>
       <td>${r.status.weaponScan ? "כן" : "לא"}</td>
-      <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount,0)})` : "לא"}</td>
+      <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount, 0)})` : "לא"}</td>
       <td>${escapeHtml(r.status.detention)}</td>
       <td>
         <div class="rowActions">
@@ -685,11 +705,11 @@ function renderRecords(rows) {
     tbody.appendChild(tr);
   }
 
-  tbody.querySelectorAll("button[data-act]").forEach(btn => {
+  tbody.querySelectorAll("button[data-act]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.dataset.id;
       const act = btn.dataset.act;
-      const row = liveRows.find(x => x.id === id);
+      const row = liveRows.find((x) => x.id === id);
       if (!row) return;
 
       if (act === "edit") openEditModal(row);
@@ -709,7 +729,9 @@ async function deleteRow(row) {
     await deleteDoc(doc(db, COLLECTION_NAME, row.id));
 
     // Also remove public map pin (best-effort)
-    try { await deleteDoc(doc(db, MAP_COLLECTION, row.id)); } catch (_) {}
+    try {
+      await deleteDoc(doc(db, MAP_COLLECTION, row.id));
+    } catch (_) {}
   } catch (e) {
     console.error(e);
     alert("שגיאה במחיקה");
@@ -768,7 +790,7 @@ let refineState = {
 };
 
 function getGeneralCenter() {
-  const rows = (Array.isArray(mapRows) && mapRows.length) ? mapRows : liveRows;
+  const rows = Array.isArray(mapRows) && mapRows.length ? mapRows : liveRows;
   const pts = [];
   for (const r of rows) {
     const g = r?.gps;
@@ -776,18 +798,18 @@ function getGeneralCenter() {
   }
   if (!pts.length) return { center: [31.7, 35.2], zoom: 9 };
 
-  const lat = pts.reduce((s,p)=>s+p[0],0) / pts.length;
-  const lng = pts.reduce((s,p)=>s+p[1],0) / pts.length;
+  const lat = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const lng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   return { center: [lat, lng], zoom: 15 };
 }
 
-function makeGreenIcon(px=14) {
+function makeGreenIcon(px = 14) {
   const s = Number(px) || 14;
   return L.divIcon({
     className: "",
     html: `<div style="width:${s}px;height:${s}px;border-radius:999px;background:rgba(25,195,125,0.95);box-shadow:0 0 0 2px rgba(25,195,125,0.22);border:1px solid rgba(0,0,0,0.35);"></div>`,
     iconSize: [s, s],
-    iconAnchor: [s/2, s/2]
+    iconAnchor: [s / 2, s / 2]
   });
 }
 
@@ -817,10 +839,10 @@ function openLocModalForRow(row) {
         worldCopyJump: true
       }).setView(center, zoom);
 
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { maxZoom: 19, attribution: "Tiles © Esri" }
-      ).addTo(refineState.map);
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 19,
+        attribution: "Tiles © Esri"
+      }).addTo(refineState.map);
 
       refineState.map.on("click", (e) => {
         const ll = e.latlng;
@@ -832,7 +854,9 @@ function openLocModalForRow(row) {
       });
     }
 
-    try { refineState.map.invalidateSize(); } catch (_) {}
+    try {
+      refineState.map.invalidateSize();
+    } catch (_) {}
 
     const g = refineState.baseGps;
     if (g && Number.isFinite(g.lat) && Number.isFinite(g.lng)) {
@@ -848,7 +872,9 @@ function openLocModalForRow(row) {
       const { center, zoom } = getGeneralCenter();
       refineState.map.setView(center, zoom);
       if (refineState.marker) {
-        try { refineState.map.removeLayer(refineState.marker); } catch (_) {}
+        try {
+          refineState.map.removeLayer(refineState.marker);
+        } catch (_) {}
         refineState.marker = null;
       }
     }
@@ -947,7 +973,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
   const id = $("editId").value;
   const eventTimeLocal = $("editEventTime").value;
   const sector = $("editSector").value;
-  const houseSite = $("editHouseSite").value?.trim();
+  const houseSite = $("editHouseSite")?.value?.trim();
 
   if (!id || !eventTimeLocal || !sector || !houseSite) {
     if (toast) setToast(toast, "bad", "חסרים שדות חובה");
@@ -1008,8 +1034,12 @@ let unsubMap = null;
 let mapRows = [];
 
 function stopListeners() {
-  try { unsubAdmin?.(); } catch (_) {}
-  try { unsubMap?.(); } catch (_) {}
+  try {
+    unsubAdmin?.();
+  } catch (_) {}
+  try {
+    unsubMap?.();
+  } catch (_) {}
   unsubAdmin = null;
   unsubMap = null;
 }
@@ -1057,33 +1087,43 @@ async function backfillMapPinsFromHouseScans(rows) {
 }
 
 function startPublicMapListener() {
-  try { unsubMap?.(); } catch (_) {}
+  try {
+    unsubMap?.();
+  } catch (_) {}
 
-  // Public map reads from MAP_COLLECTION only (not from admin-only records collection)
-  const q = query(collection(db, MAP_COLLECTION), orderBy("eventTimeISO", "desc"));
-  unsubMap = onSnapshot(q, (snap) => {
-    const rows = [];
-    snap.forEach(d => {
-      const data = d.data();
-      rows.push({
-        id: d.id,
-        sector: data.sector ?? "אחר",
-        houseSite: data.houseSite ?? "",
-        eventTimeISO: data.eventTimeISO ?? null,
-        eventTimeLocal: data.eventTimeLocal ?? "",
-        gps: data.gps ?? null
+  // ✅ orderBy stable field (exists on all pins)
+  const q = query(collection(db, MAP_COLLECTION), orderBy("updatedAt", "desc"));
+
+  unsubMap = onSnapshot(
+    q,
+    (snap) => {
+      console.log("mapPins snapshot size:", snap.size);
+
+      const rows = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        rows.push({
+          id: d.id,
+          sector: data.sector ?? "אחר",
+          houseSite: data.houseSite ?? "",
+          eventTimeISO: data.eventTimeISO ?? null,
+          eventTimeLocal: data.eventTimeLocal ?? "",
+          gps: data.gps ?? null
+        });
       });
-    });
-    mapRows = rows;
 
-    // מפה חופשית לכולם
-    renderMap(rows);
-  }, (err) => {
-    console.error(err);
-    // אל נבהיל משתמשי טופס — נציג שגיאה רק במפה
-    const hint = $("mapHint");
-    if (hint) hint.textContent = "שגיאה בטעינת מפה (בדוק הרשאות קריאה)";
-  });
+      // ✅ חשוב: mapRows חייב להתעדכן מהקולקשן הציבורי בלבד
+      mapRows = rows;
+
+      // מפה חופשית לכולם
+      renderMap(mapRows);
+    },
+    (err) => {
+      console.error(err);
+      const hint = $("mapHint");
+      if (hint) hint.textContent = "שגיאה בטעינת מפה (בדוק הרשאות קריאה)";
+    }
+  );
 }
 
 function startAdminListener() {
@@ -1091,52 +1131,55 @@ function startAdminListener() {
 
   initCharts();
 
-  try { unsubAdmin?.(); } catch (_) {}
+  try {
+    unsubAdmin?.();
+  } catch (_) {}
 
   const q = query(collection(db, COLLECTION_NAME), orderBy("eventTimeISO", "desc"));
-  unsubAdmin = onSnapshot(q, (snap) => {
-    setRtStatus(true, "מחובר ל-DB: כן (Admin)");
+  unsubAdmin = onSnapshot(
+    q,
+    (snap) => {
+      setRtStatus(true, "מחובר ל-DB: כן (Admin)");
 
-    const rows = [];
-    snap.forEach(d => {
-      const data = d.data();
-      rows.push({
-        id: d.id,
-        ...data,
-        sector: data.sector ?? "אחר",
-        fillerName: data.fillerName ?? "",
-        houseSite: data.houseSite ?? "",
-        eventTimeISO: data.eventTimeISO ?? null,
-        eventTimeLocal: data.eventTimeLocal ?? "",
-        gps: data.gps ?? null,
-        status: {
-          hasAttachment: !!data?.status?.hasAttachment,
-          attachmentCount: safeNum(data?.status?.attachmentCount, 0),
-          weaponScan: !!data?.status?.weaponScan,
-          mapping: !!data?.status?.mapping,
-          detention: data?.status?.detention ?? "ללא"
-        },
-        notes: data.notes ?? ""
+      const rows = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        rows.push({
+          id: d.id,
+          ...data,
+          sector: data.sector ?? "אחר",
+          fillerName: data.fillerName ?? "",
+          houseSite: data.houseSite ?? "",
+          eventTimeISO: data.eventTimeISO ?? null,
+          eventTimeLocal: data.eventTimeLocal ?? "",
+          gps: data.gps ?? null,
+          status: {
+            hasAttachment: !!data?.status?.hasAttachment,
+            attachmentCount: safeNum(data?.status?.attachmentCount, 0),
+            weaponScan: !!data?.status?.weaponScan,
+            mapping: !!data?.status?.mapping,
+            detention: data?.status?.detention ?? "ללא"
+          },
+          notes: data.notes ?? ""
+        });
       });
-    });
 
-    liveRows = rows;
+      liveRows = rows;
 
-    // ✅ Backfill: ודא שכל הרשומות קיימות גם ב-mapPins (לציבור)
-    backfillMapPinsFromHouseScans(rows);
+      // ✅ Backfill: ודא שכל הרשומות קיימות גם ב-mapPins (לציבור)
+      backfillMapPinsFromHouseScans(rows);
 
-    renderDashboard(rows);
-    renderRecords(rows);
+      renderDashboard(rows);
+      renderRecords(rows);
 
-    // אדמין יכול לראות גם את mapPins וגם את houseScans;
-    // כדי לא "לבלבל", נצייר במפה לפי mapRows (הציבורי) אם יש.
-    if (Array.isArray(mapRows) && mapRows.length) renderMap(mapRows);
-    else renderMap(rows);
-
-  }, (err) => {
-    console.error(err);
-    setRtStatus(false, "מחובר ל-DB: שגיאה (בדוק הרשאות)");
-  });
+      // ✅ אדמין מצייר בדיוק כמו כולם: רק לפי mapPins
+      renderMap(mapRows);
+    },
+    (err) => {
+      console.error(err);
+      setRtStatus(false, "מחובר ל-DB: שגיאה (בדוק הרשאות)");
+    }
+  );
 }
 
 // קובע האם המשתמש אדמין ואז מפעיל listener רק לאדמין
@@ -1167,4 +1210,4 @@ onAuthStateChanged(auth, async (u) => {
     setRtStatus(true, "מחובר ל-DB: כן (מילוי בלבד)");
   }
 });
-
+```
