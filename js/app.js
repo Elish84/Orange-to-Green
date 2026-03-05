@@ -1,4 +1,4 @@
-```javascript
+
 import { firebaseConfig } from "./firebase-config.js";
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
@@ -1210,4 +1210,4 @@ onAuthStateChanged(auth, async (u) => {
     setRtStatus(true, "מחובר ל-DB: כן (מילוי בלבד)");
   }
 });
-```
+
