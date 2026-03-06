@@ -760,6 +760,7 @@ function renderRecords(rows) {
       <td>${r.status.weaponScan ? "כן" : "לא"}</td>
       <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount, 0)})` : "לא"}</td>
       <td>${escapeHtml(r.status.detention)}</td>
+      <td>${hasGpsForRecord(r) ? "כן" : "לא"}</td>
       <td>
         <div class="rowActions">
           <button class="linkBtn" data-act="edit" data-id="${r.id}">עריכה</button>
