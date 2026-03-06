@@ -146,6 +146,12 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
+function hasGpsForRecord(record) {
+  const lat = record?.gps?.lat;
+  const lng = record?.gps?.lng;
+  return Number.isFinite(lat) && Number.isFinite(lng);
+}
+
 function getActiveTabName() {
   return document.querySelector(".tab.active")?.dataset?.tab || "form";
 }
@@ -757,10 +763,10 @@ function renderRecords(rows) {
       <td>${escapeHtml(r.fillerName)}</td>
       <td>${escapeHtml(r.sector)}</td>
       <td>${escapeHtml(r.houseSite)}</td>
+      <td>${hasGpsForRecord(r) ? "כן" : "לא"}</td>
       <td>${r.status.weaponScan ? "כן" : "לא"}</td>
       <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount, 0)})` : "לא"}</td>
       <td>${escapeHtml(r.status.detention)}</td>
-      <td>${hasGpsForRecord(r) ? "כן" : "לא"}</td>
       <td>
         <div class="rowActions">
           <button class="linkBtn" data-act="edit" data-id="${r.id}">עריכה</button>
