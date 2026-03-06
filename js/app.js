@@ -146,23 +146,6 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
-function parseOptionalNumber(value) {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-function setEditGpsFields(gps) {
-  const latInput = $("editLatInput");
-  const lngInput = $("editLngInput");
-  const accInput = $("editAccInput");
-  if (latInput) latInput.value = Number.isFinite(gps?.lat) ? String(gps.lat) : "";
-  if (lngInput) lngInput.value = Number.isFinite(gps?.lng) ? String(gps.lng) : "";
-  if (accInput) accInput.value = Number.isFinite(gps?.accuracy) ? String(gps.accuracy) : "";
-}
-
 // ===================== AUTH (Anonymous) =====================
 async function ensureSignedIn() {
   try {
@@ -225,46 +208,12 @@ function setAdminUI(admin) {
 }
 
 // ===================== TABS =====================
-function refreshVisibleTabData(tab) {
-  const activeTab = tab || document.querySelector(".tab.active")?.dataset?.tab;
-
-  if (activeTab === "map") {
-    initMapIfNeeded();
-    window.setTimeout(() => {
-      try {
-        mapState?.map?.invalidateSize?.();
-      } catch (_) {}
-    }, 80);
-    renderMap(Array.isArray(mapRows) ? mapRows : []);
-    return;
-  }
-
-  if ((activeTab === "dashboard" || activeTab === "records") && isAdmin) {
-    if (activeTab === "dashboard") renderDashboard(liveRows);
-    if (activeTab === "records") renderRecords(liveRows);
-  }
-}
-
-function restartRelevantListeners() {
-  try {
-    unsubMap?.();
-  } catch (_) {}
-  unsubMap = null;
-  startPublicMapListener();
-
-  if (isAdmin) {
-    try {
-      unsubAdmin?.();
-    } catch (_) {}
-    unsubAdmin = null;
-    startAdminListener();
-  }
-}
-
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const tab = btn.dataset.tab;
 
+    // אם מנסים להיכנס לדשבורד/רשומות – נדרוש אדמין
+    // המפה חופשית לכולם
     if (tab === "dashboard" || tab === "records") {
       const ok = await ensureAdminOrLogin();
       if (!ok) return;
@@ -276,20 +225,23 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("show"));
     document.getElementById(`tab-${tab}`)?.classList.add("show");
 
-    restartRelevantListeners();
-    refreshVisibleTabData(tab);
+    // Leaflet חייב invalidateSize אחרי שהאלמנט נהיה גלוי
+    if (tab === "map") {
+      initMapIfNeeded();
+      window.setTimeout(() => {
+        try {
+          mapState?.map?.invalidateSize?.();
+        } catch (_) {}
+      }, 80);
+
+      // אם כבר יש דאטה מה-listener, נצייר מיד
+      // עדיפות ל-mapRows (public pins)
+      if (Array.isArray(mapRows) && mapRows.length) renderMap(mapRows);
+      else renderMap([]); // ✅ כדי שיראה 0 אם אין pins ציבוריים
+    }
+
+    scheduleRefreshActiveViews(60);
   });
-});
-
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  restartRelevantListeners();
-  refreshVisibleTabData();
-});
-
-window.addEventListener("pageshow", () => {
-  restartRelevantListeners();
-  refreshVisibleTabData();
 });
 
 // ===================== MAP (Leaflet + Esri World Imagery) =====================
@@ -592,28 +544,61 @@ let liveRows = [];
 let chartBySector = null;
 let chartDetention = null;
 
-function initCharts() {
+function destroyChartSafe(instance, canvasId) {
+  try {
+    if (instance && typeof instance.destroy === "function") {
+      instance.destroy();
+    }
+  } catch (e) {
+    console.warn(`destroyChartSafe(${canvasId}) instance failed:`, e);
+  }
+
+  try {
+    const canvas = document.getElementById(canvasId);
+    const existing = canvas && typeof Chart !== "undefined" && typeof Chart.getChart === "function"
+      ? Chart.getChart(canvas)
+      : null;
+    if (existing && existing !== instance) existing.destroy();
+  } catch (e) {
+    console.warn(`destroyChartSafe(${canvasId}) lookup failed:`, e);
+  }
+}
+
+function initCharts(forceRecreate = false) {
   const ctx1 = $("chartBySector");
   const ctx2 = $("chartDetention");
-  if (!ctx1 || !ctx2) return;
+  if (!ctx1 || !ctx2 || typeof Chart === "undefined") return;
 
-  chartBySector = new Chart(ctx1, {
-    type: "bar",
-    data: {
-      labels: SECTORS,
-      datasets: [{ label: "כמות איתורים (רשומות)", data: SECTORS.map(() => 0) }]
-    },
-    options: { responsive: true, plugins: { legend: { display: true } } }
-  });
+  if (forceRecreate) {
+    destroyChartSafe(chartBySector, "chartBySector");
+    destroyChartSafe(chartDetention, "chartDetention");
+    chartBySector = null;
+    chartDetention = null;
+  }
 
-  chartDetention = new Chart(ctx2, {
-    type: "doughnut",
-    data: {
-      labels: DETENTION_OPTIONS,
-      datasets: [{ label: "חקירות/מעצרים", data: DETENTION_OPTIONS.map(() => 0) }]
-    },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-  });
+  if (!chartBySector) {
+    destroyChartSafe(null, "chartBySector");
+    chartBySector = new Chart(ctx1, {
+      type: "bar",
+      data: {
+        labels: SECTORS,
+        datasets: [{ label: "כמות איתורים (רשומות)", data: SECTORS.map(() => 0) }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true } } }
+    });
+  }
+
+  if (!chartDetention) {
+    destroyChartSafe(null, "chartDetention");
+    chartDetention = new Chart(ctx2, {
+      type: "doughnut",
+      data: {
+        labels: DETENTION_OPTIONS,
+        datasets: [{ label: "חקירות/מעצרים", data: DETENTION_OPTIONS.map(() => 0) }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }
+    });
+  }
 }
 
 function computeAggregates(rows) {
@@ -664,6 +649,8 @@ function computeAggregates(rows) {
 function renderDashboard(rows) {
   if (!isAdmin) return;
 
+  initCharts(true);
+
   const { bySector, overall } = computeAggregates(rows);
 
   $("totalRecords").textContent = rows.length;
@@ -674,13 +661,31 @@ function renderDashboard(rows) {
   $("lastUpdate").textContent = fmtShortTime(new Date());
 
   if (chartBySector) {
-    chartBySector.data.datasets[0].data = SECTORS.map((s) => bySector[s].total);
-    chartBySector.update();
+    try {
+      chartBySector.data.datasets[0].data = SECTORS.map((s) => bySector[s].total);
+      chartBySector.update();
+    } catch (e) {
+      console.warn("chartBySector update failed, recreating:", e);
+      initCharts(true);
+      if (chartBySector) {
+        chartBySector.data.datasets[0].data = SECTORS.map((s) => bySector[s].total);
+        chartBySector.update();
+      }
+    }
   }
 
   if (chartDetention) {
-    chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map((k) => overall.detentionCounts[k] ?? 0);
-    chartDetention.update();
+    try {
+      chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map((k) => overall.detentionCounts[k] ?? 0);
+      chartDetention.update();
+    } catch (e) {
+      console.warn("chartDetention update failed, recreating:", e);
+      initCharts(true);
+      if (chartDetention) {
+        chartDetention.data.datasets[0].data = DETENTION_OPTIONS.map((k) => overall.detentionCounts[k] ?? 0);
+        chartDetention.update();
+      }
+    }
   }
 
   const wrap = $("sectorCards");
@@ -804,7 +809,9 @@ function openEditModal(row) {
   $("editHouseSite").value = row.houseSite || "";
 
   const gps = row.gps ?? null;
-  setEditGpsFields(gps);
+  $("editLat").textContent = gps?.lat ?? "—";
+  $("editLng").textContent = gps?.lng ?? "—";
+  $("editAcc").textContent = gps?.accuracy ?? "—";
 
   $("editHasAttachment").checked = !!row.status.hasAttachment;
   $("editWeaponScan").checked = !!row.status.weaponScan;
@@ -990,7 +997,9 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
 
     // עדכון מיידי ב-UI (גם לפני ה-snapshot הבא)
     try {
-      setEditGpsFields(patch.gps);
+      $("editLat").textContent = patch.gps.lat;
+      $("editLng").textContent = patch.gps.lng;
+      $("editAcc").textContent = patch.gps.accuracy ?? "—";
       if (currentEditRow && currentEditRow.id === refineState.docId) currentEditRow.gps = patch.gps;
     } catch (_) {}
 
@@ -1004,10 +1013,6 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
 $("editHasAttachment")?.addEventListener("change", (e) => {
   $("editAttachmentCountWrap").style.display = e.target.checked ? "block" : "none";
   if (!e.target.checked) $("editAttachmentCount").value = 1;
-});
-
-$("btnClearEditGps")?.addEventListener("click", () => {
-  setEditGpsFields(null);
 });
 
 modal?.addEventListener("click", (e) => {
@@ -1033,36 +1038,6 @@ $("editForm")?.addEventListener("submit", async (e) => {
   const hasAttachment = $("editHasAttachment").checked;
   const attachmentCount = hasAttachment ? Math.max(1, safeNum($("editAttachmentCount").value, 1)) : 0;
 
-  const latVal = parseOptionalNumber($("editLatInput")?.value);
-  const lngVal = parseOptionalNumber($("editLngInput")?.value);
-  const accVal = parseOptionalNumber($("editAccInput")?.value);
-
-  if (Number.isNaN(latVal) || Number.isNaN(lngVal) || Number.isNaN(accVal)) {
-    if (toast) setToast(toast, "bad", "ערכי GPS לא תקינים");
-    return;
-  }
-
-  if ((latVal === null) !== (lngVal === null)) {
-    if (toast) setToast(toast, "bad", "כדי לעדכן GPS ידנית צריך גם Lat וגם Lng");
-    return;
-  }
-
-  if (latVal !== null && (latVal < -90 || latVal > 90 || lngVal < -180 || lngVal > 180)) {
-    if (toast) setToast(toast, "bad", "Lat/Lng מחוץ לטווח התקין");
-    return;
-  }
-
-  const manualGps = latVal === null
-    ? null
-    : {
-        lat: Number(latVal.toFixed(6)),
-        lng: Number(lngVal.toFixed(6)),
-        accuracy: accVal === null ? null : Number(accVal.toFixed(1)),
-        capturedAt: currentEditRow?.gps?.capturedAt ?? new Date().toISOString(),
-        refinedFromMap: currentEditRow?.gps?.refinedFromMap ?? false,
-        editedManually: true
-      };
-
   const patch = {
     eventTimeLocal,
     eventTimeISO: parseDatetimeLocalToISO(eventTimeLocal),
@@ -1077,7 +1052,6 @@ $("editForm")?.addEventListener("submit", async (e) => {
       detention: $("editDetention").value || "ללא"
     },
     notes: ($("editNotes").value ?? "").trim(),
-    gps: manualGps,
     updatedAt: serverTimestamp()
   };
 
@@ -1093,7 +1067,6 @@ $("editForm")?.addEventListener("submit", async (e) => {
           houseSite: patch.houseSite,
           eventTimeISO: patch.eventTimeISO,
           eventTimeLocal: patch.eventTimeLocal,
-          gps: patch.gps,
           updatedAt: serverTimestamp()
         },
         { merge: true }
@@ -1102,12 +1075,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
       console.warn("Failed to update public pin:", e2);
     }
 
-    if (currentEditRow && currentEditRow.id === id) {
-      currentEditRow = { ...currentEditRow, ...patch, gps: patch.gps };
-    }
-
     if (toast) setToast(toast, "ok", "עודכן ✅");
-    refreshVisibleTabData("records");
     window.setTimeout(closeModal, 650);
   } catch (err) {
     console.error(err);
@@ -1129,6 +1097,11 @@ function stopListeners() {
   } catch (_) {}
   unsubAdmin = null;
   unsubMap = null;
+
+  destroyChartSafe(chartBySector, "chartBySector");
+  destroyChartSafe(chartDetention, "chartDetention");
+  chartBySector = null;
+  chartDetention = null;
 }
 
 /**
@@ -1184,7 +1157,6 @@ function startPublicMapListener() {
   unsubMap = onSnapshot(
     q,
     (snap) => {
-      console.log("mapPins snapshot size:", snap.size);
 
       const rows = [];
       snap.forEach((d) => {
@@ -1204,7 +1176,6 @@ function startPublicMapListener() {
 
       // מפה חופשית לכולם
       renderMap(mapRows);
-      refreshVisibleTabData();
     },
     (err) => {
       console.error(err);
@@ -1262,7 +1233,6 @@ function startAdminListener() {
 
       // ✅ אדמין מצייר בדיוק כמו כולם: רק לפי mapPins
       renderMap(mapRows);
-      refreshVisibleTabData();
     },
     (err) => {
       console.error(err);
@@ -1270,6 +1240,26 @@ function startAdminListener() {
     }
   );
 }
+
+
+let _refreshTimer = null;
+function refreshActiveViews() {
+  if (Array.isArray(mapRows)) renderMap(mapRows);
+  if (isAdmin) {
+    renderDashboard(liveRows);
+    renderRecords(liveRows);
+  }
+}
+
+function scheduleRefreshActiveViews(delay = 120) {
+  window.clearTimeout(_refreshTimer);
+  _refreshTimer = window.setTimeout(refreshActiveViews, delay);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleRefreshActiveViews(120);
+});
+window.addEventListener("focus", () => scheduleRefreshActiveViews(120));
 
 // קובע האם המשתמש אדמין ואז מפעיל listener רק לאדמין
 onAuthStateChanged(auth, async (u) => {
