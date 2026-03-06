@@ -551,14 +551,7 @@ $("scanForm")?.addEventListener("submit", async (e) => {
     const ref = await addDoc(collection(db, COLLECTION_NAME), payload);
 
     // 2) Write/overwrite public pin (readable by everyone)
-    await setDoc(doc(db, MAP_COLLECTION, ref.id), {
-      sector: payload.sector,
-      houseSite: payload.houseSite,
-      eventTimeISO: payload.eventTimeISO,
-      eventTimeLocal: payload.eventTimeLocal,
-      gps: payload.gps ?? null,
-      updatedAt: serverTimestamp()
-    });
+    await syncMapPinForRow(ref.id, payload);
 
     if (toast) setToast(toast, "ok", "נשמר בהצלחה ✅");
     $("btnReset")?.click();
@@ -995,18 +988,13 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
 
     // Keep public pin in sync (map is public)
     try {
-      await setDoc(
-        doc(db, MAP_COLLECTION, refineState.docId),
-        {
-          sector: currentEditRow?.sector ?? "אחר",
-          houseSite: currentEditRow?.houseSite ?? "",
-          eventTimeISO: currentEditRow?.eventTimeISO ?? null,
-          eventTimeLocal: currentEditRow?.eventTimeLocal ?? "",
-          gps: patch.gps,
-          updatedAt: serverTimestamp()
-        },
-        { merge: true }
-      );
+      await syncMapPinForRow(refineState.docId, {
+        sector: currentEditRow?.sector ?? "אחר",
+        houseSite: currentEditRow?.houseSite ?? "",
+        eventTimeISO: currentEditRow?.eventTimeISO ?? null,
+        eventTimeLocal: currentEditRow?.eventTimeLocal ?? "",
+        gps: patch.gps
+      });
     } catch (e2) {
       console.warn("Failed to update public pin:", e2);
     }
@@ -1107,18 +1095,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
 
     // Keep public pin in sync (sector/house/time might have changed)
     try {
-      await setDoc(
-        doc(db, MAP_COLLECTION, id),
-        {
-          sector: patch.sector,
-          houseSite: patch.houseSite,
-          eventTimeISO: patch.eventTimeISO,
-          eventTimeLocal: patch.eventTimeLocal,
-          gps: patch.gps,
-          updatedAt: serverTimestamp()
-        },
-        { merge: true }
-      );
+      await syncMapPinForRow(id, patch);
     } catch (e2) {
       console.warn("Failed to update public pin:", e2);
     }
@@ -1148,14 +1125,14 @@ function stopListeners() {
 }
 
 /**
- * Backfill: מסנכרן מסמכים קיימים מ-houseScans אל mapPins,
- * כדי שמשתמשים לא-אדמין יראו גם נתונים "ישנים" במפה.
- * רץ רק לאדמין.
+ * Repair helper בלבד.
+ * לא רץ אוטומטית על כל snapshot כדי לא לחסום עריכה/מחיקה
+ * ולא לייצר טעינה מלאה של mapPins אחרי כל שינוי קטן.
  */
 let _backfillRunning = false;
 async function backfillMapPinsFromHouseScans(rows) {
   if (!isAdmin) return;
-  if (_backfillRunning) return; // הגנה מפני ריצה מקבילית
+  if (_backfillRunning) return;
   if (!Array.isArray(rows) || rows.length === 0) return;
 
   _backfillRunning = true;
@@ -1165,7 +1142,6 @@ async function backfillMapPinsFromHouseScans(rows) {
     for (const r of rows) {
       if (!r?.id) continue;
 
-      // pin ציבורי מינימלי
       const pin = {
         sector: r.sector ?? "אחר",
         houseSite: r.houseSite ?? "",
@@ -1189,6 +1165,23 @@ async function backfillMapPinsFromHouseScans(rows) {
   }
 }
 
+
+async function syncMapPinForRow(id, patch) {
+  if (!id) return;
+  await setDoc(
+    doc(db, MAP_COLLECTION, id),
+    {
+      sector: patch?.sector ?? "אחר",
+      houseSite: patch?.houseSite ?? "",
+      eventTimeISO: patch?.eventTimeISO ?? null,
+      eventTimeLocal: patch?.eventTimeLocal ?? "",
+      gps: patch?.gps ?? null,
+      updatedAt: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+
 function startPublicMapListener() {
   try {
     unsubMap?.();
@@ -1200,7 +1193,7 @@ function startPublicMapListener() {
   unsubMap = onSnapshot(
     q,
     (snap) => {
-      console.log("mapPins snapshot size:", snap.size);
+      // console.log("mapPins snapshot size:", snap.size);
 
       const rows = [];
       snap.forEach((d) => {
@@ -1269,14 +1262,7 @@ function startAdminListener() {
 
       liveRows = rows;
 
-      // ✅ Backfill: ודא שכל הרשומות קיימות גם ב-mapPins (לציבור)
-      backfillMapPinsFromHouseScans(rows);
-
-      renderDashboard(rows);
-      renderRecords(rows);
-
-      // ✅ אדמין מצייר בדיוק כמו כולם: רק לפי mapPins
-      renderMap(mapRows);
+      refreshVisibleViews();
     },
     (err) => {
       console.error(err);
