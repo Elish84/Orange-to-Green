@@ -830,8 +830,7 @@ function exportAllRowsToCsv() {
     lines.push(line.map(csvEscape).join(","));
   }
 
-  const blob = new Blob(["﻿" + lines.join("
-")], { type: "text/csv;charset=utf-8;" });
+const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
