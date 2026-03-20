@@ -79,6 +79,22 @@
             <span class="label">איתור בית</span>
             <input id="houseSite" type="text" placeholder="שדה פתוח" required />
           </label>
+
+          <label class="field">
+            <span class="label">מקום</span>
+            <select id="place" required>
+              <option value="" disabled selected>בחר מקום…</option>
+            </select>
+          </label>
+
+          <div class="field adminPlaceField" id="adminPlaceField" style="display:none;">
+            <span class="label">ניהול מקומות (אדמין)</span>
+            <div class="inline wrap">
+              <input id="newPlaceInput" type="text" placeholder="הוסף מקום חדש לרשימה" />
+              <button type="button" class="btn secondary" id="btnAddPlace">הוסף מקום</button>
+            </div>
+            <span class="hint">המקום החדש יופיע מיד ברשימות הבחירה</span>
+          </div>
         </div>
 
         <div class="cardDivider"></div>
@@ -88,6 +104,7 @@
             <span class="label">מיקום עצמי (GPS מהטלפון)</span>
             <div class="gpsRow">
               <button type="button" class="btn secondary" id="btnGetGPS">משוך מיקום</button>
+              <button type="button" class="btn secondary" id="btnPickGPSFromMap">דייק ממפה</button>
               <button type="button" class="btn ghost" id="btnClearGPS">איפוס</button>
             </div>
             <div class="gpsPreview" id="gpsPreview">
@@ -102,17 +119,11 @@
             <span class="label">סטאטוס וממצאים</span>
 
             <div class="checks">
-              <label class="check">
-                <input id="hasAttachment" type="checkbox" />
-                <span>הצמדה (כן/לא)</span>
+              <label class="field">
+                <span class="label">כמות הצמדות</span>
+                <input id="attachmentCount" type="number" min="0" step="1" inputmode="numeric" required placeholder="הכנס מספר" />
+                <span class="hint">שדה חובה מספרי</span>
               </label>
-
-              <div class="inline" id="attachmentCountWrap" style="display:none;">
-                <label class="field small">
-                  <span class="label">מספר הצמדות</span>
-                  <input id="attachmentCount" type="number" min="1" step="1" value="1" />
-                </label>
-              </div>
 
               <label class="check">
                 <input id="weaponScan" type="checkbox" />
@@ -159,6 +170,9 @@
         <div class="statusRow">
           <span class="pill">סך הכל רשומות: <b id="totalRecords">0</b></span>
           <span class="pill">עדכון אחרון: <b id="lastUpdate">—</b></span>
+          <select id="dashboardPlaceFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
         </div>
       </div>
 
@@ -215,6 +229,9 @@
             <option>א'</option><option>ב'</option><option>ג'</option>
             <option>מסייעת</option><option>גדוד</option><option>אחר</option>
           </select>
+          <select id="placeFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
           <button id="btnExportCsv" class="btn secondary" type="button">יצוא רשומות CSV</button>
         </div>
       </div>
@@ -227,6 +244,7 @@
               <th class="sortable" data-sort-key="fillerName">שם <span class="sortMark"></span></th>
               <th class="sortable" data-sort-key="sector">גזרה <span class="sortMark"></span></th>
               <th class="sortable" data-sort-key="houseSite">איתור <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="place">מקום <span class="sortMark"></span></th>
               <th class="sortable" data-sort-key="hasGps">מיקום <span class="sortMark"></span></th>
               <th class="sortable" data-sort-key="weaponScan">אמל״ח <span class="sortMark"></span></th>
               <th class="sortable" data-sort-key="attachmentCount">הצמדה <span class="sortMark"></span></th>
@@ -297,6 +315,13 @@
             <span class="label">איתור בית</span>
             <input id="editHouseSite" type="text" required />
           </label>
+
+          <label class="field">
+            <span class="label">מקום</span>
+            <select id="editPlace" required>
+              <option value="" disabled>בחר מקום…</option>
+            </select>
+          </label>
         </div>
 
         <div class="grid two">
@@ -325,13 +350,10 @@
 
           <div class="field">
             <span class="label">סטאטוס</span>
-            <label class="check"><input id="editHasAttachment" type="checkbox" /> <span>הצמדה</span></label>
-            <div class="inline" id="editAttachmentCountWrap" style="display:none;">
-              <label class="field small">
-                <span class="label">מספר הצמדות</span>
-                <input id="editAttachmentCount" type="number" min="1" step="1" value="1" />
-              </label>
-            </div>
+            <label class="field small">
+              <span class="label">כמות הצמדות</span>
+              <input id="editAttachmentCount" type="number" min="0" step="1" inputmode="numeric" required />
+            </label>
 
             <label class="check"><input id="editWeaponScan" type="checkbox" /> <span>סריקות אמל״ח</span></label>
             <label class="check"><input id="editMapping" type="checkbox" /> <span>מיפוי מבנה</span></label>
@@ -385,6 +407,7 @@
           <button type="button" class="btn secondary" id="btnCancelLoc">ביטול</button>
         </div>
 
+        <input type="hidden" id="locContext" value="edit" />
         <div class="toast" id="locToast" aria-live="polite"></div>
       </div>
     </div>
