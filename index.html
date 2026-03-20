@@ -35,6 +35,7 @@
       <button class="tab" data-tab="dashboard">דשבורד</button>
       <button class="tab" data-tab="map">מפה</button>
       <button class="tab" data-tab="records">רשומות</button>
+      <button class="tab" data-tab="admin">אדמין</button>
     </nav>
   </header>
 
@@ -86,15 +87,6 @@
               <option value="" disabled selected>בחר מקום…</option>
             </select>
           </label>
-
-          <div class="field adminPlaceField" id="adminPlaceField" style="display:none;">
-            <span class="label">ניהול מקומות (אדמין)</span>
-            <div class="inline wrap">
-              <input id="newPlaceInput" type="text" placeholder="הוסף מקום חדש לרשימה" />
-              <button type="button" class="btn secondary" id="btnAddPlace">הוסף מקום</button>
-            </div>
-            <span class="hint">המקום החדש יופיע מיד ברשימות הבחירה</span>
-          </div>
         </div>
 
         <div class="cardDivider"></div>
@@ -267,6 +259,9 @@
         <h2>מפה</h2>
         <div class="statusRow">
           <span class="pill">איתורים עם GPS: <b id="mapTotal">0</b></span>
+          <select id="mapPlaceFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
           <span class="pill muted" id="mapHint">ריחוף עם העכבר מעל נקודה מציג את מספר איתור הבית</span>
         </div>
       </div>
@@ -279,6 +274,63 @@
         </div>
       </div>
     </section>
+
+    <!-- ===================== ADMIN ===================== -->
+    <section id="tab-admin" class="panel">
+      <div class="panelHeader">
+        <h2>ניהול אדמין</h2>
+        <div class="statusRow">
+          <span class="pill">ניהול אפשרויות לטפסים, מפה ודשבורד</span>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>יצירת מקום חדש</h3>
+          <div class="field">
+            <span class="label">שם מקום</span>
+            <div class="inline wrap">
+              <input id="adminNewPlaceInput" type="text" placeholder="לדוגמה: מחנה צפוני" />
+              <button type="button" class="btn secondary" id="btnAdminAddPlace">הוסף מקום</button>
+            </div>
+            <span class="hint">המקום יופיע מיד בכל הטפסים, במפה, בדשבורד וברשומות.</span>
+          </div>
+          <div class="toast" id="adminPlaceToast" aria-live="polite"></div>
+        </div>
+
+        <div class="card">
+          <h3>הוספת אפשרות לגזרה</h3>
+          <div class="field">
+            <span class="label">שם גזרה</span>
+            <div class="inline wrap">
+              <input id="adminNewSectorInput" type="text" placeholder="לדוגמה: מרחב מזרח" />
+              <button type="button" class="btn secondary" id="btnAdminAddSector">הוסף גזרה</button>
+            </div>
+            <span class="hint">הגזרה החדשה תופיע בכל שדות הבחירה הרלוונטיים.</span>
+          </div>
+          <div class="toast" id="adminSectorToast" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="adminListHeader">
+            <h3>כלל המקומות הקיימים</h3>
+            <span class="pill"><b id="adminPlacesCount">0</b> מקומות</span>
+          </div>
+          <div id="adminPlacesList" class="optionList"></div>
+        </div>
+
+        <div class="card">
+          <div class="adminListHeader">
+            <h3>אפשרויות גזרה פעילות</h3>
+            <span class="pill"><b id="adminSectorsCount">0</b> גזרות</span>
+          </div>
+          <div id="adminSectorsList" class="optionList"></div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ===================== EDIT MODAL ===================== -->
