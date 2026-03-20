@@ -30,7 +30,8 @@ const COLLECTION_NAME = "houseScans";
 // Public, minimal collection for map pins (readable by non-admin users)
 const MAP_COLLECTION = "mapPins";
 const PLACES_COLLECTION = "places";
-const SECTORS = ["א'","ב'","ג'","מסייעת","גדוד","אחר"];
+const SECTORS_COLLECTION = "sectors";
+const DEFAULT_SECTORS = ["א'","ב'","ג'","מסייעת","גדוד","אחר"];
 const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפונית","עצור"];
 
 // ===================== INIT =====================
@@ -39,6 +40,7 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 let isAdmin = false;
 let allPlaces = [];
+let allSectors = [...DEFAULT_SECTORS];
 
 async function checkIsAdmin(uid) {
   try {
@@ -138,41 +140,71 @@ function normalizeText(s) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
-function normalizePlaceName(s) {
+function normalizeOptionName(s) {
   return (s ?? "").toString().trim();
 }
 
-function getPlaceKey(s) {
-  return normalizePlaceName(s).toLowerCase();
+function normalizePlaceName(s) {
+  return normalizeOptionName(s);
 }
 
-function uniquePlacesSorted(values) {
+function normalizeSectorName(s) {
+  return normalizeOptionName(s);
+}
+
+function getOptionKey(s) {
+  return normalizeOptionName(s).toLowerCase();
+}
+
+function getPlaceKey(s) {
+  return getOptionKey(s);
+}
+
+function getSectorKey(s) {
+  return getOptionKey(s);
+}
+
+function uniqueOptionsSorted(values) {
   const map = new Map();
   for (const raw of values || []) {
-    const v = normalizePlaceName(raw);
+    const v = normalizeOptionName(raw);
     if (!v) continue;
-    const k = getPlaceKey(v);
+    const k = getOptionKey(v);
     if (!map.has(k)) map.set(k, v);
   }
   return [...map.values()].sort((a, b) => a.localeCompare(b, "he", { sensitivity: "base", numeric: true }));
+}
+
+function uniquePlacesSorted(values) {
+  return uniqueOptionsSorted(values);
+}
+
+function uniqueSectorsSorted(values) {
+  return uniqueOptionsSorted([...(values || []), ...DEFAULT_SECTORS]);
+}
+
+function getPlaceOptionsForRows(rows = []) {
+  return uniquePlacesSorted([...(allPlaces || []), ...(rows || []).map((r) => r?.place)]);
+}
+
+function getSectorOptionsForRows(rows = []) {
+  return uniqueSectorsSorted([...(allSectors || []), ...(rows || []).map((r) => r?.sector)]);
 }
 
 function populatePlaceSelect(selectId, selectedValue = "", includeBlank = true) {
   const el = $(selectId);
   if (!el) return;
   const current = normalizePlaceName(selectedValue || el.value || "");
-  const opts = uniquePlacesSorted([...(allPlaces || []), current]);
-  const blankText = selectId === "dashboardPlaceFilter" || selectId === "placeFilter" ? "כל המקומות" : "בחר מקום…";
+  const opts = getPlaceOptionsForRows([...liveRows, ...mapRows, current ? { place: current } : null].filter(Boolean));
+  const blankText = ["dashboardPlaceFilter", "placeFilter", "mapPlaceFilter"].includes(selectId) ? "כל המקומות" : "בחר מקום…";
   el.innerHTML = "";
   if (includeBlank) {
     const opt = document.createElement("option");
     opt.value = "";
     opt.textContent = blankText;
-    if (!current) {
-      if (selectId === "place" || selectId === "editPlace") {
-        opt.disabled = true;
-        opt.selected = true;
-      }
+    if (!current && (selectId === "place" || selectId === "editPlace")) {
+      opt.disabled = true;
+      opt.selected = true;
     }
     el.appendChild(opt);
   }
@@ -186,12 +218,52 @@ function populatePlaceSelect(selectId, selectedValue = "", includeBlank = true) 
   if (current) el.value = current;
 }
 
-function refreshPlaceOptions() {
+function populateSectorSelect(selectId, selectedValue = "", includeBlank = true) {
+  const el = $(selectId);
+  if (!el) return;
+  const current = normalizeSectorName(selectedValue || el.value || "");
+  const opts = getSectorOptionsForRows([...liveRows, current ? { sector: current } : null].filter(Boolean));
+  const blankText = selectId === "sectorFilter" ? "כל הגזרות" : "בחר גזרה…";
+  el.innerHTML = "";
+  if (includeBlank) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = blankText;
+    if (!current && (selectId === "sector" || selectId === "editSector")) {
+      opt.disabled = true;
+      opt.selected = true;
+    }
+    el.appendChild(opt);
+  }
+  for (const sector of opts) {
+    const opt = document.createElement("option");
+    opt.value = sector;
+    opt.textContent = sector;
+    if (current && getSectorKey(current) === getSectorKey(sector)) opt.selected = true;
+    el.appendChild(opt);
+  }
+  if (current) el.value = current;
+}
+
+function refreshOptionSelects() {
   populatePlaceSelect("place", $("place")?.value || "", true);
   populatePlaceSelect("editPlace", $("editPlace")?.value || "", true);
   populatePlaceSelect("dashboardPlaceFilter", $("dashboardPlaceFilter")?.value || "", true);
   populatePlaceSelect("placeFilter", $("placeFilter")?.value || "", true);
+  populatePlaceSelect("mapPlaceFilter", $("mapPlaceFilter")?.value || "", true);
+  populateSectorSelect("sector", $("sector")?.value || "", true);
+  populateSectorSelect("editSector", $("editSector")?.value || "", true);
+  populateSectorSelect("sectorFilter", $("sectorFilter")?.value || "", true);
 }
+
+function refreshPlaceOptions() {
+  refreshOptionSelects();
+}
+
+function refreshSectorOptions() {
+  refreshOptionSelects();
+}
+
 
 function escapeHtml(str) {
   return (str ?? "")
@@ -222,6 +294,10 @@ function refreshVisibleViews() {
 
   if (activeTab === "records" && isAdmin) {
     renderRecords(liveRows);
+  }
+
+  if (activeTab === "admin" && isAdmin) {
+    renderAdminPanel();
   }
 
   if (activeTab === "map") {
@@ -269,40 +345,20 @@ function setRtStatus(ok, text) {
 }
 
 function setAdminUI(admin) {
-  const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
-  const mapTabBtn = document.querySelector(`.tab[data-tab="map"]`);
-  const recTabBtn = document.querySelector(`.tab[data-tab="records"]`);
-  const adminPlaceField = $("adminPlaceField");
-
-  if (adminPlaceField) adminPlaceField.style.display = admin ? "flex" : "none";
-
-  // תמיד להציג
-  [dashTabBtn, mapTabBtn, recTabBtn].forEach((btn) => {
-    if (!btn) return;
-    btn.style.display = ""; // לא להסתיר!
-    // דשבורד + רשומות נעולים ללא אדמין. המפה חופשית לכולם.
-    if (btn === mapTabBtn) btn.classList.remove("locked");
-    else btn.classList.toggle("locked", !admin);
+  const gatedTabs = ["dashboard", "records", "admin"];
+  document.querySelectorAll(".tab").forEach((btn) => {
+    if (!btn?.dataset?.tab) return;
+    btn.classList.toggle("locked", gatedTabs.includes(btn.dataset.tab) && !admin);
   });
-
-  // אם לא אדמין והוא כבר נמצא בדשבורד/רשומות — נחזיר לטופס
-  if (!admin) {
-    const activeEl = document.querySelector(".tab.active");
-    const active = activeEl && activeEl.dataset ? activeEl.dataset.tab : null;
-
-    if (active === "dashboard" || active === "records") {
-      const formBtn = document.querySelector('.tab[data-tab="form"]');
-      if (formBtn) formBtn.click();
-    }
-  }
 }
+
 
 // ===================== TABS =====================
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const tab = btn.dataset.tab;
 
-    if (tab === "dashboard" || tab === "records") {
+    if (tab === "dashboard" || tab === "records" || tab === "admin") {
       const ok = await ensureAdminOrLogin();
       if (!ok) return;
     }
@@ -332,6 +388,11 @@ document.querySelectorAll(".tab").forEach((btn) => {
 
     if (tab === "records" && isAdmin) {
       renderRecords(liveRows);
+      return;
+    }
+
+    if (tab === "admin" && isAdmin) {
+      renderAdminPanel();
     }
   });
 });
@@ -425,10 +486,13 @@ function updateAllMarkerIcons() {
 
 function renderMap(rows) {
   const totalEl = document.getElementById("mapTotal");
+  const selectedPlace = normalizePlaceName($("mapPlaceFilter")?.value);
   const valid = (rows || []).filter((r) => {
     const lat = r?.gps?.lat;
     const lng = r?.gps?.lng;
-    return Number.isFinite(lat) && Number.isFinite(lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    if (selectedPlace && getPlaceKey(r?.place) !== getPlaceKey(selectedPlace)) return false;
+    return true;
   });
 
   if (totalEl) totalEl.textContent = String(valid.length);
@@ -475,6 +539,7 @@ function renderMap(rows) {
         <div style="font-weight:900; margin-bottom:6px;">איתור בית: ${escapeHtml(houseSite)}</div>
         <div style="opacity:.85; font-size:12px;">זמן: ${escapeHtml(fmtShortTime(r.eventTimeISO || r.eventTimeLocal || ""))}</div>
         <div style="opacity:.85; font-size:12px;">גזרה: ${escapeHtml(r.sector || "—")}</div>
+        <div style="opacity:.85; font-size:12px;">מקום: ${escapeHtml(r.place || "—")}</div>
         <div style="opacity:.85; font-size:12px;">ממלא: ${escapeHtml(r.fillerName || "—")}</div>
         <div style="opacity:.8; font-size:12px; margin-top:6px;">Lat/Lng: ${escapeHtml(lat)}, ${escapeHtml(lng)}</div>
       </div>`;
@@ -508,7 +573,9 @@ $("btnReset")?.addEventListener("click", () => {
   if (c) c.value = "";
   const det = $("detention");
   if (det) det.value = "ללא";
-  populatePlaceSelect("place", "", true);
+  refreshOptionSelects();
+  if ($("place")) $("place").value = "";
+  if ($("sector")) $("sector").value = "";
 });
 
 let currentGPS = null;
@@ -537,30 +604,6 @@ function clearGPS() {
 
 $("btnClearGPS")?.addEventListener("click", clearGPS);
 
-$("btnAddPlace")?.addEventListener("click", async () => {
-  if (!isAdmin) return;
-  const raw = $("newPlaceInput")?.value || "";
-  const place = normalizePlaceName(raw);
-  if (!place) {
-    setToast($("formToast"), "bad", "יש להזין מקום תקין");
-    return;
-  }
-  try {
-    const id = getPlaceKey(place).replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "") || `place_${Date.now()}`;
-    await setDoc(doc(db, PLACES_COLLECTION, id), {
-      name: place,
-      nameLower: getPlaceKey(place),
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp()
-    }, { merge: true });
-    if ($("newPlaceInput")) $("newPlaceInput").value = "";
-    if ($("place")) $("place").value = place;
-    setToast($("formToast"), "ok", `המקום "${place}" נוסף`);
-  } catch (e) {
-    console.error(e);
-    setToast($("formToast"), "bad", "שגיאה בהוספת מקום");
-  }
-});
 
 $("btnPickGPSFromMap")?.addEventListener("click", () => {
   $("locContext").value = "form";
@@ -690,8 +733,8 @@ function initCharts(forceRecreate = false) {
     chartBySector = new Chart(ctx1, {
       type: "bar",
       data: {
-        labels: SECTORS,
-        datasets: [{ label: "כמות איתורים (רשומות)", data: SECTORS.map(() => 0) }]
+        labels: DEFAULT_SECTORS,
+        datasets: [{ label: "כמות איתורים (רשומות)", data: DEFAULT_SECTORS.map(() => 0) }]
       },
       options: {
         responsive: true,
@@ -708,8 +751,8 @@ function initCharts(forceRecreate = false) {
     chartDetention = new Chart(ctx2, {
       type: "doughnut",
       data: {
-        labels: SECTORS,
-        datasets: [{ label: "הצמדות לפי גזרה", data: SECTORS.map(() => 0) }]
+        labels: DEFAULT_SECTORS,
+        datasets: [{ label: "הצמדות לפי גזרה", data: DEFAULT_SECTORS.map(() => 0) }]
       },
       options: {
         responsive: true,
@@ -729,8 +772,9 @@ function getDashboardFilteredRows(rows) {
 }
 
 function computeAggregates(rows) {
+  const sectorOptions = getSectorOptionsForRows(rows);
   const bySector = Object.fromEntries(
-    SECTORS.map((s) => [
+    sectorOptions.map((s) => [
       s,
       {
         total: 0,
@@ -749,7 +793,7 @@ function computeAggregates(rows) {
   };
 
   for (const r of rows) {
-    const s = SECTORS.includes(r.sector) ? r.sector : "אחר";
+    const s = sectorOptions.includes(r.sector) ? r.sector : (sectorOptions[0] || "אחר");
     const det = DETENTION_OPTIONS.includes(r.status.detention) ? r.status.detention : "ללא";
 
     bySector[s].total += 1;
@@ -774,53 +818,135 @@ function computeAggregates(rows) {
 }
 
 function renderDashboard(rows) {
-  if (!isAdmin) return;
-
-  initCharts(false);
-
   const filteredRows = getDashboardFilteredRows(rows);
-  const { bySector, overall } = computeAggregates(filteredRows);
+  const sectorOptions = getSectorOptionsForRows(filteredRows);
+  const safeSectorOptions = sectorOptions.length ? sectorOptions : [...DEFAULT_SECTORS];
 
-  $("totalRecords").textContent = filteredRows.length;
-  $("kpiCompleted").textContent = overall.total;
-  $("kpiWeapon").textContent = overall.weapon;
-  $("kpiAttachments").textContent = overall.attachments;
+  if ($("totalRecords")) $("totalRecords").textContent = String(filteredRows.length);
+  if ($("lastUpdate")) $("lastUpdate").textContent = fmtShortTime(new Date());
 
-  $("lastUpdate").textContent = fmtShortTime(new Date());
+  const bySector = Object.fromEntries(
+    safeSectorOptions.map((s) => [s, { total: 0, attachments: 0, weapon: 0, detention: 0 }])
+  );
 
-  if (chartBySector) {
-    chartBySector.data.datasets[0].data = SECTORS.map((s) => bySector[s].total);
-    chartBySector.update("none");
-  }
+  let weaponCount = 0;
+  let attachmentSum = 0;
 
-  if (chartDetention) {
-    chartDetention.data.labels = SECTORS;
-    chartDetention.data.datasets[0].data = SECTORS.map((s) => bySector[s].attachments ?? 0);
-    chartDetention.update("none");
-  }
-
-  const wrap = $("sectorCards");
-  if (wrap) {
-    wrap.innerHTML = "";
-    for (const s of SECTORS) {
-      const ag = bySector[s];
-      const detTop = DETENTION_OPTIONS.map((k) => ({ k, v: ag.detentionCounts[k] ?? 0 })).sort((a, b) => b.v - a.v)[0];
-
-      const el = document.createElement("div");
-      el.className = "sectorCard";
-      el.innerHTML = `
-        <div class="sectorTitle">גזרה ${s}</div>
-        <div class="sectorStats">
-          <div class="statBox"><div class="k">איתורים הושלמו</div><div class="v">${ag.total}</div></div>
-          <div class="statBox"><div class="k">סריקות אמל"ח</div><div class="v">${ag.weapon}</div></div>
-          <div class="statBox"><div class="k">סה"כ הצמדות</div><div class="v">${ag.attachments}</div></div>
-          <div class="statBox"><div class="k">חקירות/מעצרים (מוביל)</div><div class="v">${detTop.k}: ${detTop.v}</div></div>
-        </div>
-      `;
-      wrap.appendChild(el);
+  for (const r of filteredRows) {
+    const sectorName = safeSectorOptions.includes(r.sector) ? r.sector : safeSectorOptions[0];
+    if (!bySector[sectorName]) bySector[sectorName] = { total: 0, attachments: 0, weapon: 0, detention: 0 };
+    bySector[sectorName].total += 1;
+    if (r?.status?.weaponScan) {
+      bySector[sectorName].weapon += 1;
+      weaponCount += 1;
     }
+    const cnt = Math.max(0, safeNum(r?.status?.attachmentCount, 0));
+    bySector[sectorName].attachments += cnt;
+    attachmentSum += cnt;
+    if ((r?.status?.detention || "ללא") !== "ללא") bySector[sectorName].detention += 1;
+  }
+
+  if ($("kpiCompleted")) $("kpiCompleted").textContent = String(filteredRows.length);
+  if ($("kpiWeapon")) $("kpiWeapon").textContent = String(weaponCount);
+  if ($("kpiAttachments")) $("kpiAttachments").textContent = String(attachmentSum);
+
+  if (chartBySector && chartDetention) {
+    chartBySector.data.labels = safeSectorOptions;
+    chartBySector.data.datasets[0].data = safeSectorOptions.map((s) => bySector[s]?.total ?? 0);
+    chartBySector.update();
+
+    chartDetention.data.labels = safeSectorOptions;
+    chartDetention.data.datasets[0].data = safeSectorOptions.map((s) => bySector[s]?.attachments ?? 0);
+    chartDetention.update();
+  }
+
+  const sectorCards = $("sectorCards");
+  if (sectorCards) {
+    sectorCards.innerHTML = safeSectorOptions.map((s) => `
+      <div class="sectorCard">
+        <div class="sectorTitle">${escapeHtml(s)}</div>
+        <div class="sectorStats">
+          <div class="statBox"><div class="k">איתורים</div><div class="v">${bySector[s]?.total ?? 0}</div></div>
+          <div class="statBox"><div class="k">הצמדות</div><div class="v">${bySector[s]?.attachments ?? 0}</div></div>
+          <div class="statBox"><div class="k">אמל״ח</div><div class="v">${bySector[s]?.weapon ?? 0}</div></div>
+          <div class="statBox"><div class="k">חקירות/מעצרים</div><div class="v">${bySector[s]?.detention ?? 0}</div></div>
+        </div>
+      </div>`).join("");
   }
 }
+
+
+
+function ensureOptionDocId(value, prefix) {
+  return getOptionKey(value).replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "") || `${prefix}_${Date.now()}`;
+}
+
+async function addPlaceOptionFromInput(inputId, toastId) {
+  const raw = $(inputId)?.value ?? "";
+  const place = normalizePlaceName(raw);
+  const toast = $(toastId);
+  if (!place) {
+    if (toast) setToast(toast, "bad", "יש להזין מקום תקין");
+    return;
+  }
+  try {
+    await setDoc(doc(db, PLACES_COLLECTION, ensureOptionDocId(place, "place")), {
+      name: place,
+      nameLower: getPlaceKey(place),
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp()
+    }, { merge: true });
+    $(inputId).value = "";
+    if (toast) setToast(toast, "ok", `המקום "${place}" נוסף`);
+  } catch (e) {
+    console.error(e);
+    if (toast) setToast(toast, "bad", "שגיאה בהוספת מקום");
+  }
+}
+
+async function addSectorOptionFromInput(inputId, toastId) {
+  const raw = $(inputId)?.value ?? "";
+  const sector = normalizeSectorName(raw);
+  const toast = $(toastId);
+  if (!sector) {
+    if (toast) setToast(toast, "bad", "יש להזין גזרה תקינה");
+    return;
+  }
+  try {
+    await setDoc(doc(db, SECTORS_COLLECTION, ensureOptionDocId(sector, "sector")), {
+      name: sector,
+      nameLower: getSectorKey(sector),
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp()
+    }, { merge: true });
+    $(inputId).value = "";
+    if (toast) setToast(toast, "ok", `הגזרה "${sector}" נוספה`);
+  } catch (e) {
+    console.error(e);
+    if (toast) setToast(toast, "bad", "שגיאה בהוספת גזרה");
+  }
+}
+
+function makeAdminOptionRow(name, type) {
+  const safeName = escapeHtml(name);
+  const label = type === "place" ? "מקום" : "גזרה";
+  return `<div class="optionItem"><div class="meta"><div class="name">${safeName}</div><div class="sub">${label} פעיל לבחירה</div></div></div>`;
+}
+
+function renderAdminPanel() {
+  const places = getPlaceOptionsForRows([...liveRows, ...mapRows]);
+  const sectors = getSectorOptionsForRows(liveRows);
+  if ($("adminPlacesCount")) $("adminPlacesCount").textContent = String(places.length);
+  if ($("adminSectorsCount")) $("adminSectorsCount").textContent = String(sectors.length);
+  if ($("adminPlacesList")) $("adminPlacesList").innerHTML = places.length ? places.map((n) => makeAdminOptionRow(n, "place")).join("") : '<div class="optionItem emptyItem">עדיין אין מקומות</div>';
+  if ($("adminSectorsList")) $("adminSectorsList").innerHTML = sectors.length ? sectors.map((n) => makeAdminOptionRow(n, "sector")).join("") : '<div class="optionItem emptyItem">עדיין אין גזרות</div>';
+}
+
+$("btnAdminAddPlace")?.addEventListener("click", async () => { if (!(await ensureAdminOrLogin())) return; await addPlaceOptionFromInput("adminNewPlaceInput", "adminPlaceToast"); });
+$("btnAdminAddSector")?.addEventListener("click", async () => { if (!(await ensureAdminOrLogin())) return; await addSectorOptionFromInput("adminNewSectorInput", "adminSectorToast"); });
+$("adminNewPlaceInput")?.addEventListener("keydown", async (e) => { if (e.key !== "Enter") return; e.preventDefault(); if (!(await ensureAdminOrLogin())) return; await addPlaceOptionFromInput("adminNewPlaceInput", "adminPlaceToast"); });
+$("adminNewSectorInput")?.addEventListener("keydown", async (e) => { if (e.key !== "Enter") return; e.preventDefault(); if (!(await ensureAdminOrLogin())) return; await addSectorOptionFromInput("adminNewSectorInput", "adminSectorToast"); });
+$("mapPlaceFilter")?.addEventListener("change", () => { mapState.hasFit = false; renderMap(mapRows); });
 
 // ===================== RECORDS =====================
 $("searchBox")?.addEventListener("input", () => renderRecords(liveRows));
@@ -1025,7 +1151,7 @@ function openEditModal(row) {
   $("editId").value = row.id;
   $("editEventTime").value = row.eventTimeLocal || toDatetimeLocalValue(new Date(row.eventTimeISO || Date.now()));
   $("editFillerName").value = row.fillerName || "";
-  $("editSector").value = SECTORS.includes(row.sector) ? row.sector : "אחר";
+  populateSectorSelect("editSector", row.sector || "", true);
   $("editHouseSite").value = row.houseSite || "";
   populatePlaceSelect("editPlace", row.place || "", true);
 
@@ -1333,13 +1459,11 @@ let unsubMap = null;
 let mapRows = [];
 
 let unsubPlaces = null;
+let unsubSectors = null;
 
 function startPlacesListener() {
-  try {
-    unsubPlaces?.();
-  } catch (_) {}
-
-    unsubPlaces = onSnapshot(
+  try { unsubPlaces?.(); } catch (_) {}
+  unsubPlaces = onSnapshot(
     collection(db, PLACES_COLLECTION),
     (snap) => {
       const rows = [];
@@ -1348,13 +1472,30 @@ function startPlacesListener() {
         const name = normalizePlaceName(data.name || d.id || "");
         if (name) rows.push(name);
       });
-      allPlaces = uniquePlacesSorted(rows);
-      refreshPlaceOptions();
+      allPlaces = uniquePlacesSorted([...(liveRows || []).map((r) => r.place), ...(mapRows || []).map((r) => r.place), ...rows]);
+      refreshOptionSelects();
       refreshVisibleViews();
     },
-    (err) => {
-      console.error("places listener failed:", err);
-    }
+    (err) => console.error("places listener failed:", err)
+  );
+}
+
+function startSectorsListener() {
+  try { unsubSectors?.(); } catch (_) {}
+  unsubSectors = onSnapshot(
+    collection(db, SECTORS_COLLECTION),
+    (snap) => {
+      const rows = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const name = normalizeSectorName(data.name || d.id || "");
+        if (name) rows.push(name);
+      });
+      allSectors = uniqueSectorsSorted([...(liveRows || []).map((r) => r.sector), ...rows]);
+      refreshOptionSelects();
+      refreshVisibleViews();
+    },
+    (err) => console.error("sectors listener failed:", err)
   );
 }
 
@@ -1380,9 +1521,13 @@ function stopListeners() {
   try {
     unsubPlaces?.();
   } catch (_) {}
+  try {
+    unsubSectors?.();
+  } catch (_) {}
   unsubAdmin = null;
   unsubMap = null;
   unsubPlaces = null;
+  unsubSectors = null;
 }
 
 /**
@@ -1474,8 +1619,9 @@ function startPublicMapListener() {
 
       // ✅ חשוב: mapRows חייב להתעדכן מהקולקשן הציבורי בלבד
       mapRows = rows;
+      allPlaces = uniquePlacesSorted([...(allPlaces || []), ...rows.map((r) => r.place)]);
+      refreshOptionSelects();
 
-      // מפה חופשית לכולם
       renderMap(mapRows);
     },
     (err) => {
@@ -1527,7 +1673,8 @@ function startAdminListener() {
 
       liveRows = rows;
       allPlaces = uniquePlacesSorted([...(allPlaces || []), ...rows.map((r) => r.place)]);
-      refreshPlaceOptions();
+      allSectors = uniqueSectorsSorted([...(allSectors || []), ...rows.map((r) => r.sector)]);
+      refreshOptionSelects();
 
       refreshVisibleViews();
     },
@@ -1559,6 +1706,7 @@ onAuthStateChanged(auth, async (u) => {
   // - דשבורד + רשומות: אדמין בלבד
   stopListeners();
   startPlacesListener();
+  startSectorsListener();
   startPublicMapListener();
 
   if (isAdmin) {
