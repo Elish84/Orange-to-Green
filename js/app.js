@@ -29,6 +29,7 @@ import {
 const COLLECTION_NAME = "houseScans";
 // Public, minimal collection for map pins (readable by non-admin users)
 const MAP_COLLECTION = "mapPins";
+const PLACES_COLLECTION = "places";
 const SECTORS = ["א'","ב'","ג'","מסייעת","גדוד","אחר"];
 const DETENTION_OPTIONS = ["ללא","נלקח לחקירה","תושאל טלפונית","עצור"];
 
@@ -37,6 +38,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 let isAdmin = false;
+let allPlaces = [];
 
 async function checkIsAdmin(uid) {
   try {
@@ -136,6 +138,61 @@ function normalizeText(s) {
   return (s ?? "").toString().trim().toLowerCase();
 }
 
+function normalizePlaceName(s) {
+  return (s ?? "").toString().trim();
+}
+
+function getPlaceKey(s) {
+  return normalizePlaceName(s).toLowerCase();
+}
+
+function uniquePlacesSorted(values) {
+  const map = new Map();
+  for (const raw of values || []) {
+    const v = normalizePlaceName(raw);
+    if (!v) continue;
+    const k = getPlaceKey(v);
+    if (!map.has(k)) map.set(k, v);
+  }
+  return [...map.values()].sort((a, b) => a.localeCompare(b, "he", { sensitivity: "base", numeric: true }));
+}
+
+function populatePlaceSelect(selectId, selectedValue = "", includeBlank = true) {
+  const el = $(selectId);
+  if (!el) return;
+  const current = normalizePlaceName(selectedValue || el.value || "");
+  const opts = uniquePlacesSorted([...(allPlaces || []), current]);
+  const blankText = selectId === "dashboardPlaceFilter" || selectId === "placeFilter" ? "כל המקומות" : "בחר מקום…";
+  el.innerHTML = "";
+  if (includeBlank) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = blankText;
+    if (!current) {
+      if (selectId === "place" || selectId === "editPlace") {
+        opt.disabled = true;
+        opt.selected = true;
+      }
+    }
+    el.appendChild(opt);
+  }
+  for (const place of opts) {
+    const opt = document.createElement("option");
+    opt.value = place;
+    opt.textContent = place;
+    if (current && getPlaceKey(current) === getPlaceKey(place)) opt.selected = true;
+    el.appendChild(opt);
+  }
+  if (current) el.value = current;
+}
+
+function refreshPlaceOptions() {
+  populatePlaceSelect("place", $("place")?.value || "", true);
+  populatePlaceSelect("editPlace", $("editPlace")?.value || "", true);
+  populatePlaceSelect("dashboardPlaceFilter", $("dashboardPlaceFilter")?.value || "", true);
+  populatePlaceSelect("placeFilter", $("placeFilter")?.value || "", true);
+}
+
 function escapeHtml(str) {
   return (str ?? "")
     .toString()
@@ -215,6 +272,9 @@ function setAdminUI(admin) {
   const dashTabBtn = document.querySelector(`.tab[data-tab="dashboard"]`);
   const mapTabBtn = document.querySelector(`.tab[data-tab="map"]`);
   const recTabBtn = document.querySelector(`.tab[data-tab="records"]`);
+  const adminPlaceField = $("adminPlaceField");
+
+  if (adminPlaceField) adminPlaceField.style.display = admin ? "flex" : "none";
 
   // תמיד להציג
   [dashTabBtn, mapTabBtn, recTabBtn].forEach((btn) => {
@@ -444,21 +504,11 @@ $("btnReset")?.addEventListener("click", () => {
   $("scanForm")?.reset();
   if (eventTimeEl) eventTimeEl.value = toDatetimeLocalValue(new Date());
   clearGPS();
-  const wrap = $("attachmentCountWrap");
-  if (wrap) wrap.style.display = "none";
   const c = $("attachmentCount");
-  if (c) c.value = 1;
+  if (c) c.value = "";
   const det = $("detention");
   if (det) det.value = "ללא";
-});
-
-$("hasAttachment")?.addEventListener("change", (e) => {
-  const wrap = $("attachmentCountWrap");
-  if (wrap) wrap.style.display = e.target.checked ? "block" : "none";
-  if (!e.target.checked) {
-    const c = $("attachmentCount");
-    if (c) c.value = 1;
-  }
+  populatePlaceSelect("place", "", true);
 });
 
 let currentGPS = null;
@@ -486,6 +536,36 @@ function clearGPS() {
 }
 
 $("btnClearGPS")?.addEventListener("click", clearGPS);
+
+$("btnAddPlace")?.addEventListener("click", async () => {
+  if (!isAdmin) return;
+  const raw = $("newPlaceInput")?.value || "";
+  const place = normalizePlaceName(raw);
+  if (!place) {
+    setToast($("formToast"), "bad", "יש להזין מקום תקין");
+    return;
+  }
+  try {
+    const id = getPlaceKey(place).replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, "") || `place_${Date.now()}`;
+    await setDoc(doc(db, PLACES_COLLECTION, id), {
+      name: place,
+      nameLower: getPlaceKey(place),
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp()
+    }, { merge: true });
+    if ($("newPlaceInput")) $("newPlaceInput").value = "";
+    if ($("place")) $("place").value = place;
+    setToast($("formToast"), "ok", `המקום "${place}" נוסף`);
+  } catch (e) {
+    console.error(e);
+    setToast($("formToast"), "bad", "שגיאה בהוספת מקום");
+  }
+});
+
+$("btnPickGPSFromMap")?.addEventListener("click", () => {
+  $("locContext").value = "form";
+  openLocModalForForm();
+});
 
 $("btnGetGPS")?.addEventListener("click", async () => {
   if (!navigator.geolocation) {
@@ -521,14 +601,19 @@ $("scanForm")?.addEventListener("submit", async (e) => {
   const eventTimeLocal = $("eventTime")?.value;
   const sector = $("sector")?.value;
   const houseSite = $("houseSite")?.value?.trim();
+  const place = normalizePlaceName($("place")?.value);
+  const attachmentCountRaw = $("attachmentCount")?.value;
+  const attachmentCount = Number(attachmentCountRaw);
 
-  if (!eventTimeLocal || !sector || !houseSite) {
-    if (toast) setToast(toast, "bad", "חסרים שדות חובה: זמן/תאריך, גזרה, איתור בית");
+  if (!eventTimeLocal || !sector || !houseSite || !place) {
+    if (toast) setToast(toast, "bad", "חסרים שדות חובה: זמן/תאריך, גזרה, איתור בית, מקום");
     return;
   }
 
-  const hasAttachment = $("hasAttachment")?.checked;
-  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("attachmentCount")?.value, 1)) : 0;
+  if (!Number.isInteger(attachmentCount) || attachmentCount < 0) {
+    if (toast) setToast(toast, "bad", "כמות הצמדות חייבת להיות מספר שלם 0 ומעלה");
+    return;
+  }
 
   const payload = {
     eventTimeLocal,
@@ -536,9 +621,10 @@ $("scanForm")?.addEventListener("submit", async (e) => {
     fillerName: ($("fillerName")?.value ?? "").trim(),
     sector,
     houseSite,
+    place,
     gps: currentGPS,
     status: {
-      hasAttachment: !!hasAttachment,
+      hasAttachment: attachmentCount > 0,
       attachmentCount,
       weaponScan: !!$("weaponScan")?.checked,
       mapping: !!$("mapping")?.checked,
@@ -636,6 +722,12 @@ function initCharts(forceRecreate = false) {
   }
 }
 
+function getDashboardFilteredRows(rows) {
+  const placeFilter = normalizePlaceName($("dashboardPlaceFilter")?.value);
+  if (!placeFilter) return rows;
+  return rows.filter((r) => normalizePlaceName(r.place) === placeFilter);
+}
+
 function computeAggregates(rows) {
   const bySector = Object.fromEntries(
     SECTORS.map((s) => [
@@ -686,9 +778,10 @@ function renderDashboard(rows) {
 
   initCharts(false);
 
-  const { bySector, overall } = computeAggregates(rows);
+  const filteredRows = getDashboardFilteredRows(rows);
+  const { bySector, overall } = computeAggregates(filteredRows);
 
-  $("totalRecords").textContent = rows.length;
+  $("totalRecords").textContent = filteredRows.length;
   $("kpiCompleted").textContent = overall.total;
   $("kpiWeapon").textContent = overall.weapon;
   $("kpiAttachments").textContent = overall.attachments;
@@ -732,6 +825,8 @@ function renderDashboard(rows) {
 // ===================== RECORDS =====================
 $("searchBox")?.addEventListener("input", () => renderRecords(liveRows));
 $("sectorFilter")?.addEventListener("change", () => renderRecords(liveRows));
+$("placeFilter")?.addEventListener("change", () => renderRecords(liveRows));
+$("dashboardPlaceFilter")?.addEventListener("change", () => renderDashboard(liveRows));
 $("btnExportCsv")?.addEventListener("click", exportAllRowsToCsv);
 
 document.querySelectorAll("th.sortable[data-sort-key]").forEach((th) => {
@@ -752,6 +847,7 @@ function getSortValue(row, key) {
     case "fillerName": return normalizeText(row?.fillerName);
     case "sector": return normalizeText(row?.sector);
     case "houseSite": return normalizeText(row?.houseSite);
+    case "place": return normalizeText(row?.place);
     case "hasGps": return hasGpsForRecord(row) ? 1 : 0;
     case "weaponScan": return row?.status?.weaponScan ? 1 : 0;
     case "attachmentCount": return row?.status?.hasAttachment ? safeNum(row?.status?.attachmentCount, 0) : 0;
@@ -782,11 +878,13 @@ function updateSortIndicators() {
 function buildFilteredSortedRows(rows) {
   const qText = normalizeText($("searchBox")?.value);
   const sectorFilter = $("sectorFilter")?.value;
+  const placeFilter = $("placeFilter")?.value;
 
   const filtered = rows.filter((r) => {
     if (sectorFilter && r.sector !== sectorFilter) return false;
+    if (placeFilter && normalizePlaceName(r.place) !== placeFilter) return false;
     if (!qText) return true;
-    const hay = [r.fillerName, r.sector, r.houseSite, r.status?.detention, r.notes].map(normalizeText).join(" | ");
+    const hay = [r.fillerName, r.sector, r.houseSite, r.place, r.status?.detention, r.notes].map(normalizeText).join(" | ");
     return hay.includes(qText);
   });
 
@@ -802,7 +900,7 @@ function exportAllRowsToCsv() {
   if (!isAdmin) return;
   const rows = [...liveRows].sort((a, b) => compareRows(a, b, "eventTimeISO", "desc"));
   const headers = [
-    "id", "eventTimeLocal", "eventTimeISO", "fillerName", "sector", "houseSite",
+    "id", "eventTimeLocal", "eventTimeISO", "fillerName", "sector", "houseSite", "place",
     "hasGps", "lat", "lng", "accuracy", "hasAttachment", "attachmentCount",
     "weaponScan", "mapping", "detention", "notes"
   ];
@@ -816,6 +914,7 @@ function exportAllRowsToCsv() {
       r.fillerName || "",
       r.sector || "",
       r.houseSite || "",
+      r.place || "",
       hasGpsForRecord(r) ? "כן" : "לא",
       r?.gps?.lat ?? "",
       r?.gps?.lng ?? "",
@@ -928,19 +1027,17 @@ function openEditModal(row) {
   $("editFillerName").value = row.fillerName || "";
   $("editSector").value = SECTORS.includes(row.sector) ? row.sector : "אחר";
   $("editHouseSite").value = row.houseSite || "";
+  populatePlaceSelect("editPlace", row.place || "", true);
 
   const gps = row.gps ?? null;
   if ($("editLatInput")) $("editLatInput").value = gps?.lat ?? "";
   if ($("editLngInput")) $("editLngInput").value = gps?.lng ?? "";
   if ($("editAccInput")) $("editAccInput").value = gps?.accuracy ?? "";
 
-  $("editHasAttachment").checked = !!status.hasAttachment;
   $("editWeaponScan").checked = !!status.weaponScan;
   $("editMapping").checked = !!status.mapping;
   $("editDetention").value = DETENTION_OPTIONS.includes(status.detention) ? status.detention : "ללא";
-
-  $("editAttachmentCountWrap").style.display = status.hasAttachment ? "block" : "none";
-  $("editAttachmentCount").value = Math.max(1, safeNum(status.attachmentCount, 1));
+  $("editAttachmentCount").value = Math.max(0, safeNum(status.attachmentCount, 0));
 
   $("editNotes").value = row.notes || "";
 
@@ -989,16 +1086,13 @@ function makeGreenIcon(px = 14) {
   });
 }
 
-function openLocModalForRow(row) {
-  if (!isAdmin) return;
-  if (!row) return;
+function openLocModal(baseGps = null) {
   if (typeof L === "undefined") {
     alert("Map library not loaded");
     return;
   }
 
-  refineState.docId = row.id;
-  refineState.baseGps = row.gps ?? null;
+  refineState.baseGps = baseGps ?? null;
 
   locModal?.classList.add("show");
   locModal?.setAttribute("aria-hidden", "false");
@@ -1044,7 +1138,6 @@ function openLocModalForRow(row) {
         refineState.marker.setLatLng(pos);
       }
     } else {
-      // בלי GPS קיים — מציבים את המפה באזור כללי ומחכים ללחיצה
       const { center, zoom } = getGeneralCenter();
       refineState.map.setView(center, zoom);
       if (refineState.marker) {
@@ -1055,6 +1148,13 @@ function openLocModalForRow(row) {
       }
     }
   }, 120);
+}
+
+function openLocModalForRow(row) {
+  if (!isAdmin || !row) return;
+  refineState.docId = row.id;
+  $("locContext").value = "edit";
+  openLocModal(row.gps ?? null);
 }
 
 function closeLocModal() {
@@ -1071,8 +1171,8 @@ locModal?.addEventListener("click", (e) => {
 });
 
 $("btnConfirmLoc")?.addEventListener("click", async () => {
-  if (!isAdmin) return;
   const toast = $("locToast");
+  const ctx = $("locContext")?.value || "edit";
 
   if (!refineState.marker) {
     if (toast) setToast(toast, "bad", "בחר נקודה על המפה");
@@ -1081,26 +1181,36 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
 
   const ll = refineState.marker.getLatLng();
   const baseAcc = refineState.baseGps?.accuracy ?? null;
+  const gpsPatch = {
+    lat: Number(ll.lat.toFixed(6)),
+    lng: Number(ll.lng.toFixed(6)),
+    accuracy: baseAcc,
+    capturedAt: new Date().toISOString(),
+    refinedFromMap: true
+  };
+
+  if (ctx === "form") {
+    applyFormGps(gpsPatch);
+    if (toast) setToast(toast, "ok", "המיקום נשמר לטופס ✅");
+    window.setTimeout(closeLocModal, 300);
+    return;
+  }
+
+  if (!isAdmin || !refineState.docId) return;
 
   const patch = {
-    gps: {
-      lat: Number(ll.lat.toFixed(6)),
-      lng: Number(ll.lng.toFixed(6)),
-      accuracy: baseAcc,
-      capturedAt: new Date().toISOString(),
-      refinedFromMap: true
-    },
+    gps: gpsPatch,
     updatedAt: serverTimestamp()
   };
 
   try {
     await updateDoc(doc(db, COLLECTION_NAME, refineState.docId), patch);
 
-    // Keep public pin in sync (map is public)
     try {
       await syncMapPinForRow(refineState.docId, {
         sector: currentEditRow?.sector ?? "אחר",
         houseSite: currentEditRow?.houseSite ?? "",
+        place: currentEditRow?.place ?? "",
         eventTimeISO: currentEditRow?.eventTimeISO ?? null,
         eventTimeLocal: currentEditRow?.eventTimeLocal ?? "",
         gps: patch.gps
@@ -1111,7 +1221,6 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
 
     if (toast) setToast(toast, "ok", "מיקום עודכן ✅");
 
-    // עדכון מיידי ב-UI (גם לפני ה-snapshot הבא)
     try {
       if ($("editLatInput")) $("editLatInput").value = patch.gps.lat ?? "";
       if ($("editLngInput")) $("editLngInput").value = patch.gps.lng ?? "";
@@ -1124,11 +1233,6 @@ $("btnConfirmLoc")?.addEventListener("click", async () => {
     console.error(e);
     if (toast) setToast(toast, "bad", "שגיאה בעדכון מיקום");
   }
-});
-
-$("editHasAttachment")?.addEventListener("change", (e) => {
-  $("editAttachmentCountWrap").style.display = e.target.checked ? "block" : "none";
-  if (!e.target.checked) $("editAttachmentCount").value = 1;
 });
 
 $("btnClearEditGps")?.addEventListener("click", () => {
@@ -1151,14 +1255,18 @@ $("editForm")?.addEventListener("submit", async (e) => {
   const eventTimeLocal = $("editEventTime").value;
   const sector = $("editSector").value;
   const houseSite = $("editHouseSite")?.value?.trim();
+  const place = normalizePlaceName($("editPlace")?.value);
+  const attachmentCount = Number($("editAttachmentCount").value);
 
-  if (!id || !eventTimeLocal || !sector || !houseSite) {
+  if (!id || !eventTimeLocal || !sector || !houseSite || !place) {
     if (toast) setToast(toast, "bad", "חסרים שדות חובה");
     return;
   }
 
-  const hasAttachment = $("editHasAttachment").checked;
-  const attachmentCount = hasAttachment ? Math.max(1, safeNum($("editAttachmentCount").value, 1)) : 0;
+  if (!Number.isInteger(attachmentCount) || attachmentCount < 0) {
+    if (toast) setToast(toast, "bad", "כמות הצמדות חייבת להיות מספר שלם 0 ומעלה");
+    return;
+  }
 
   const latRaw = $("editLatInput")?.value?.trim();
   const lngRaw = $("editLngInput")?.value?.trim();
@@ -1180,6 +1288,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
     fillerName: ($("editFillerName").value ?? "").trim(),
     sector,
     houseSite,
+    place,
     gps: hasManualGps
       ? {
           lat: Number(lat.toFixed(6)),
@@ -1190,7 +1299,7 @@ $("editForm")?.addEventListener("submit", async (e) => {
         }
       : null,
     status: {
-      hasAttachment,
+      hasAttachment: attachmentCount > 0,
       attachmentCount,
       weaponScan: $("editWeaponScan").checked,
       mapping: $("editMapping").checked,
@@ -1223,6 +1332,44 @@ let unsubAdmin = null;
 let unsubMap = null;
 let mapRows = [];
 
+let unsubPlaces = null;
+
+function startPlacesListener() {
+  try {
+    unsubPlaces?.();
+  } catch (_) {}
+
+    unsubPlaces = onSnapshot(
+    collection(db, PLACES_COLLECTION),
+    (snap) => {
+      const rows = [];
+      snap.forEach((d) => {
+        const data = d.data() || {};
+        const name = normalizePlaceName(data.name || d.id || "");
+        if (name) rows.push(name);
+      });
+      allPlaces = uniquePlacesSorted(rows);
+      refreshPlaceOptions();
+      refreshVisibleViews();
+    },
+    (err) => {
+      console.error("places listener failed:", err);
+    }
+  );
+}
+
+function openLocModalForForm() {
+  refineState.docId = null;
+  $("locContext").value = "form";
+  openLocModal(currentGPS);
+}
+
+function applyFormGps(gps) {
+  currentGPS = gps;
+  renderGPSPreview(currentGPS);
+  setGPSStatus("נשמר", false);
+}
+
 function stopListeners() {
   try {
     unsubAdmin?.();
@@ -1230,8 +1377,12 @@ function stopListeners() {
   try {
     unsubMap?.();
   } catch (_) {}
+  try {
+    unsubPlaces?.();
+  } catch (_) {}
   unsubAdmin = null;
   unsubMap = null;
+  unsubPlaces = null;
 }
 
 /**
@@ -1255,6 +1406,7 @@ async function backfillMapPinsFromHouseScans(rows) {
       const pin = {
         sector: r.sector ?? "אחר",
         houseSite: r.houseSite ?? "",
+        place: r.place ?? "",
         eventTimeISO: r.eventTimeISO ?? null,
         eventTimeLocal: r.eventTimeLocal ?? "",
         gps: r.gps ?? null,
@@ -1283,6 +1435,7 @@ async function syncMapPinForRow(id, patch) {
     {
       sector: patch?.sector ?? "אחר",
       houseSite: patch?.houseSite ?? "",
+      place: patch?.place ?? "",
       eventTimeISO: patch?.eventTimeISO ?? null,
       eventTimeLocal: patch?.eventTimeLocal ?? "",
       gps: patch?.gps ?? null,
@@ -1312,6 +1465,7 @@ function startPublicMapListener() {
           id: d.id,
           sector: data.sector ?? "אחר",
           houseSite: data.houseSite ?? "",
+          place: data.place ?? "",
           eventTimeISO: data.eventTimeISO ?? null,
           eventTimeLocal: data.eventTimeLocal ?? "",
           gps: data.gps ?? null
@@ -1356,6 +1510,7 @@ function startAdminListener() {
           sector: data.sector ?? "אחר",
           fillerName: data.fillerName ?? "",
           houseSite: data.houseSite ?? "",
+          place: data.place ?? "",
           eventTimeISO: data.eventTimeISO ?? null,
           eventTimeLocal: data.eventTimeLocal ?? "",
           gps: data.gps ?? null,
@@ -1371,6 +1526,8 @@ function startAdminListener() {
       });
 
       liveRows = rows;
+      allPlaces = uniquePlacesSorted([...(allPlaces || []), ...rows.map((r) => r.place)]);
+      refreshPlaceOptions();
 
       refreshVisibleViews();
     },
@@ -1401,6 +1558,7 @@ onAuthStateChanged(auth, async (u) => {
   // - מפה: חופשית לכולם
   // - דשבורד + רשומות: אדמין בלבד
   stopListeners();
+  startPlacesListener();
   startPublicMapListener();
 
   if (isAdmin) {
