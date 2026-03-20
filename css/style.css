@@ -101,6 +101,9 @@ h3{font-size:16px; color:var(--text); margin-bottom:10px}
 @media (max-width:900px){
   .grid.two,.grid.three{grid-template-columns:1fr}
   .panelHeader{flex-direction:column; align-items:flex-start}
+  .search{min-width:0; width:100%}
+  .modal{align-items:flex-start; overflow:auto}
+  .modalCard{margin:auto 0; width:100%}
 }
 
 .field{display:flex; flex-direction:column; gap:6px}
@@ -122,6 +125,8 @@ textarea{resize:vertical}
 .check input{width:18px; height:18px}
 
 .inline{display:flex; gap:10px; align-items:center}
+.inline.wrap{flex-wrap:wrap}
+.adminPlaceField{justify-content:flex-end}
 .field.small input{max-width:160px}
 
 .actions{display:flex; gap:10px; margin-top:12px; flex-wrap:wrap}
@@ -250,6 +255,9 @@ textarea{resize:vertical}
 .modal.show{display:flex}
 .modalCard{
   width:min(900px, 100%);
+  max-height:min(92vh, 980px);
+  display:flex;
+  flex-direction:column;
   border-radius:18px;
   border:1px solid var(--border);
   background: linear-gradient(180deg, rgba(15,24,49,0.92), rgba(13,21,43,0.92));
@@ -259,7 +267,7 @@ textarea{resize:vertical}
   display:flex; align-items:center; justify-content:space-between;
   padding:14px 14px 0;
 }
-.modalBody{padding:14px}
+.modalBody{padding:14px; overflow:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y}
 .modalActions{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
 .iconBtn{
   border:1px solid var(--border);
