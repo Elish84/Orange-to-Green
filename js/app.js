@@ -658,6 +658,11 @@ $("scanForm")?.addEventListener("submit", async (e) => {
     return;
   }
 
+  if (!hasGpsForRecord({ gps: currentGPS })) {
+    if (toast) setToast(toast, "bad", "מילוי נ.צ של האיתור הוא שדה חובה");
+    return;
+  }
+
   const payload = {
     eventTimeLocal,
     eventTimeISO: parseDatetimeLocalToISO(eventTimeLocal),
@@ -1091,6 +1096,7 @@ function renderRecords(rows) {
       <td>${escapeHtml(r.fillerName)}</td>
       <td>${escapeHtml(r.sector)}</td>
       <td>${escapeHtml(r.houseSite)}</td>
+      <td>${escapeHtml(r.place || "—")}</td>
       <td>${hasGpsForRecord(r) ? "כן" : "לא"}</td>
       <td>${r.status.weaponScan ? "כן" : "לא"}</td>
       <td>${r.status.hasAttachment ? `כן (${safeNum(r.status.attachmentCount, 0)})` : "לא"}</td>
@@ -1407,6 +1413,11 @@ $("editForm")?.addEventListener("submit", async (e) => {
     Number.isFinite(lng) &&
     lat >= -90 && lat <= 90 &&
     lng >= -180 && lng <= 180;
+
+  if (!hasManualGps) {
+    if (toast) setToast(toast, "bad", "מילוי נ.צ של האיתור הוא שדה חובה");
+    return;
+  }
 
   const patch = {
     eventTimeLocal,
