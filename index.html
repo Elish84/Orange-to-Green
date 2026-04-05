@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ניהול סריקות איתורי בתים - Real-Time</title>
+<link rel="stylesheet" href="./css/style.css">
+
+  <!-- Leaflet (Map) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="" />
+<script type="module" src="./js/app.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="badge">8109</div>
+      <div>
+        <div class="title">ניהול סריקות איתורי בתים</div>
+        <div class="subtitle">טופס מהיר • דשבורד Real-Time • רשומות</div>
+      </div>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="ניווט">
+      <button class="tab active" data-tab="form">טופס</button>
+      <button class="tab" data-tab="dashboard">דשבורד</button>
+      <button class="tab" data-tab="map">מפה</button>
+      <button class="tab" data-tab="records">רשומות</button>
+      <button class="tab" data-tab="admin">אדמין</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- ===================== FORM ===================== -->
+    <section id="tab-form" class="panel show">
+      <div class="panelHeader">
+        <h2>טופס מילוי מהיר</h2>
+        <div class="statusRow">
+          <span class="pill" id="rtStatus">מחובר ל-DB: בודק…</span>
+          <span class="pill" id="pendingSync" style="display:none">ממתין לסנכרון: <b id="pendingCount">0</b></span>
+          <span class="pill muted" id="gpsStatus">GPS: לא בוצע</span>
+        </div>
+      </div>
+
+      <form id="scanForm" class="card">
+        <div class="grid two">
+          <label class="field">
+            <span class="label">זמן ותאריך</span>
+            <input id="eventTime" type="datetime-local" required />
+            <span class="hint">מתמלא אוטומטית, ניתן לעריכה</span>
+          </label>
+
+          <label class="field">
+            <span class="label">שם הממלא</span>
+            <input id="fillerName" type="text" placeholder="לדוגמה: אלי" />
+          </label>
+
+          <label class="field">
+            <span class="label">גזרה</span>
+            <select id="sector" required>
+              <option value="" disabled selected>בחר גזרה…</option>
+              <option>א'</option>
+              <option>ב'</option>
+              <option>ג'</option>
+              <option>מסייעת</option>
+              <option>גדוד</option>
+              <option>אחר</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="label">איתור בית</span>
+            <input id="houseSite" type="text" placeholder="שדה פתוח" required />
+          </label>
+
+          <label class="field">
+            <span class="label">מקום</span>
+            <select id="place" required>
+              <option value="" disabled selected>בחר מקום…</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="cardDivider"></div>
+
+        <div class="grid two">
+          <div class="field">
+            <span class="label">מיקום עצמי (GPS מהטלפון)</span>
+            <div class="gpsRow">
+              <button type="button" class="btn secondary" id="btnGetGPS">משוך מיקום</button>
+              <button type="button" class="btn secondary" id="btnPickGPSFromMap">דייק ממפה</button>
+              <button type="button" class="btn ghost" id="btnClearGPS">איפוס</button>
+            </div>
+            <div class="gpsPreview" id="gpsPreview">
+              <div class="kv"><span>Lat</span><b id="latVal">—</b></div>
+              <div class="kv"><span>Lng</span><b id="lngVal">—</b></div>
+              <div class="kv"><span>דיוק מטרים </span><b id="accVal">—</b></div>
+            </div>
+            <span class="hint">שדה חובה — יש למשוך או לדייק GPS לפני שמירה. נשמרים lat/lng/accuracy + timestamp</span>
+          </div>
+
+          <div class="field">
+            <span class="label">סטאטוס וממצאים</span>
+
+            <div class="checks">
+              <label class="field">
+                <span class="label">כמות הצמדות</span>
+                <input id="attachmentCount" type="number" min="0" step="1" inputmode="numeric" required placeholder="הכנס מספר" />
+                <span class="hint">שדה חובה מספרי</span>
+              </label>
+
+              <label class="check">
+                <input id="weaponScan" type="checkbox" />
+                <span>סריקות אמל"ח (כן/לא)</span>
+              </label>
+
+              <label class="check">
+                <input id="mapping" type="checkbox" />
+                <span>מיפוי מבנה</span>
+              </label>
+
+              <label class="field">
+                <span class="label">חקירות ומעצרים</span>
+                <select id="detention" required>
+                  <option selected>ללא</option>
+                  <option>נלקח לחקירה</option>
+                  <option>תושאל טלפונית</option>
+                  <option>עצור</option>
+                </select>
+                <span class="hint">דיפולט: ללא</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="label">הערות ואירועים חריגים</span>
+          <textarea id="notes" rows="4" placeholder="מרחב למילוי"></textarea>
+        </label>
+
+        <div class="actions">
+          <button type="submit" class="btn primary" id="btnSave">שמירה ל-DB</button>
+          <button type="button" class="btn secondary" id="btnReset">ניקוי טופס</button>
+        </div>
+
+        <div class="toast" id="formToast" aria-live="polite"></div>
+      </form>
+    </section>
+
+    <!-- ===================== DASHBOARD ===================== -->
+    <section id="tab-dashboard" class="panel">
+      <div class="panelHeader">
+        <h2>דשבורד Real-Time</h2>
+        <div class="statusRow">
+          <span class="pill">סך הכל רשומות: <b id="totalRecords">0</b></span>
+          <span class="pill">עדכון אחרון: <b id="lastUpdate">—</b></span>
+          <select id="dashboardPlaceFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid three">
+        <div class="kpi card">
+          <div class="kpiLabel">איתורים הושלמו (סה״כ)</div>
+          <div class="kpiValue" id="kpiCompleted">0</div>
+          <div class="kpiHint">מספר רשומות</div>
+        </div>
+
+        <div class="kpi card">
+          <div class="kpiLabel">סריקות אמל״ח (כן)</div>
+          <div class="kpiValue" id="kpiWeapon">0</div>
+          <div class="kpiHint">סכום weaponScan=true</div>
+        </div>
+
+        <div class="kpi card">
+          <div class="kpiLabel">סה״כ הצמדות</div>
+          <div class="kpiValue" id="kpiAttachments">0</div>
+          <div class="kpiHint">סכום attachmentCount כשיש הצמדה</div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>פיזור לפי גזרה</h3>
+          <div class="chartWrap">
+            <canvas id="chartBySector"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>הצמדות לפי גזרה</h3>
+          <div class="chartWrap">
+            <canvas id="chartDetention"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>חתכים לכל גזרה</h3>
+        <div id="sectorCards" class="sectorCards"></div>
+      </div>
+    </section>
+
+    <!-- ===================== RECORDS ===================== -->
+    <section id="tab-records" class="panel">
+      <div class="panelHeader">
+        <h2>רשומות</h2>
+        <div class="statusRow">
+          <input id="searchBox" class="search" type="search" placeholder="חיפוש: שם/איתור/מקום/גזרה…" />
+          <select id="sectorFilter" class="search">
+            <option value="">כל הגזרות</option>
+            <option>א'</option><option>ב'</option><option>ג'</option>
+            <option>מסייעת</option><option>גדוד</option><option>אחר</option>
+          </select>
+          <select id="placeFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
+          <button id="btnExportCsv" class="btn secondary" type="button">יצוא רשומות CSV</button>
+        </div>
+      </div>
+
+      <div class="card tableWrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort-key="eventTimeISO">זמן <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="fillerName">שם <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="sector">גזרה <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="houseSite">איתור <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="place">מקום <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="hasGps">מיקום <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="weaponScan">אמל״ח <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="attachmentCount">הצמדה <span class="sortMark"></span></th>
+              <th class="sortable" data-sort-key="detention">חקירה/מעצר <span class="sortMark"></span></th>
+              <th>פעולות</th>
+            </tr>
+          </thead>
+          <tbody id="recordsTbody"></tbody>
+        </table>
+
+        <div class="empty" id="emptyState" style="display:none;">
+          אין רשומות להצגה.
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== MAP ===================== -->
+    <section id="tab-map" class="panel">
+      <div class="panelHeader">
+        <h2>מפה</h2>
+        <div class="statusRow">
+          <span class="pill">איתורים עם GPS: <b id="mapTotal">0</b></span>
+          <select id="mapPlaceFilter" class="search">
+            <option value="">כל המקומות</option>
+          </select>
+          <span class="pill muted" id="mapHint">ריחוף עם העכבר מעל נקודה מציג את מספר איתור הבית</span>
+        </div>
+      </div>
+
+      <div class="card mapCard">
+        <div id="map" class="map"></div>
+        <div class="mapLegend">
+          <span class="dot"></span>
+          <span>איתור בית</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== ADMIN ===================== -->
+    <section id="tab-admin" class="panel">
+      <div class="panelHeader">
+        <h2>ניהול אדמין</h2>
+        <div class="statusRow">
+          <span class="pill">ניהול אפשרויות לטפסים, מפה ודשבורד</span>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <h3>יצירת מקום חדש</h3>
+          <div class="field">
+            <span class="label">שם מקום</span>
+            <div class="inline wrap">
+              <input id="adminNewPlaceInput" type="text" placeholder="לדוגמה: מחנה צפוני" />
+              <button type="button" class="btn secondary" id="btnAdminAddPlace">הוסף מקום</button>
+            </div>
+            <span class="hint">המקום יופיע מיד בכל הטפסים, במפה, בדשבורד וברשומות.</span>
+          </div>
+          <div class="toast" id="adminPlaceToast" aria-live="polite"></div>
+        </div>
+
+        <div class="card">
+          <h3>הוספת אפשרות לגזרה</h3>
+          <div class="field">
+            <span class="label">שם גזרה</span>
+            <div class="inline wrap">
+              <input id="adminNewSectorInput" type="text" placeholder="לדוגמה: מרחב מזרח" />
+              <button type="button" class="btn secondary" id="btnAdminAddSector">הוסף גזרה</button>
+            </div>
+            <span class="hint">הגזרה החדשה תופיע בכל שדות הבחירה הרלוונטיים.</span>
+          </div>
+          <div class="toast" id="adminSectorToast" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="adminListHeader">
+            <h3>כלל המקומות הקיימים</h3>
+            <span class="pill"><b id="adminPlacesCount">0</b> מקומות</span>
+          </div>
+          <div id="adminPlacesList" class="optionList"></div>
+        </div>
+
+        <div class="card">
+          <div class="adminListHeader">
+            <h3>אפשרויות גזרה פעילות</h3>
+            <span class="pill"><b id="adminSectorsCount">0</b> גזרות</span>
+          </div>
+          <div id="adminSectorsList" class="optionList"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== EDIT MODAL ===================== -->
+  <div class="modal" id="editModal" aria-hidden="true">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+      <div class="modalHeader">
+        <h3 id="editTitle">עריכת רשומה</h3>
+        <button class="iconBtn" id="btnCloseModal" aria-label="סגור">✕</button>
+      </div>
+
+      <form id="editForm" class="modalBody">
+        <input type="hidden" id="editId" />
+
+        <div class="grid two">
+          <label class="field">
+            <span class="label">זמן ותאריך</span>
+            <input id="editEventTime" type="datetime-local" required />
+          </label>
+
+          <label class="field">
+            <span class="label">שם הממלא</span>
+            <input id="editFillerName" type="text" />
+          </label>
+
+          <label class="field">
+            <span class="label">גזרה</span>
+            <select id="editSector" required>
+              <option>א'</option><option>ב'</option><option>ג'</option>
+              <option>מסייעת</option><option>גדוד</option><option>אחר</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="label">איתור בית</span>
+            <input id="editHouseSite" type="text" required />
+          </label>
+
+          <label class="field">
+            <span class="label">מקום</span>
+            <select id="editPlace" required>
+              <option value="" disabled>בחר מקום…</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid two">
+          <div class="field">
+            <span class="label">GPS</span>
+            <div class="gpsEditGrid">
+              <label class="field small">
+                <span class="label">Lat</span>
+                <input id="editLatInput" type="number" step="0.000001" inputmode="decimal" placeholder="31.123456" />
+              </label>
+              <label class="field small">
+                <span class="label">Lng</span>
+                <input id="editLngInput" type="number" step="0.000001" inputmode="decimal" placeholder="35.123456" />
+              </label>
+              <label class="field small">
+                <span class="label">Acc</span>
+                <input id="editAccInput" type="number" step="0.1" inputmode="decimal" placeholder="5" />
+              </label>
+            </div>
+            <div class="inline" style="margin-top:10px; gap:10px; justify-content:flex-start; flex-wrap:wrap;">
+              <button type="button" class="btn secondary" id="btnRefineLocation">📍 דייק מיקום</button>
+              <button type="button" class="btn ghost" id="btnClearEditGps">נקה GPS</button>
+            </div>
+            <span class="hint">ניתן לדייק מיקום מהמפה או להקליד Lat / Lng ידנית</span>
+          </div>
+
+          <div class="field">
+            <span class="label">סטאטוס</span>
+            <label class="field small">
+              <span class="label">כמות הצמדות</span>
+              <input id="editAttachmentCount" type="number" min="0" step="1" inputmode="numeric" required />
+            </label>
+
+            <label class="check"><input id="editWeaponScan" type="checkbox" /> <span>סריקות אמל״ח</span></label>
+            <label class="check"><input id="editMapping" type="checkbox" /> <span>מיפוי מבנה</span></label>
+
+            <label class="field">
+              <span class="label">חקירות ומעצרים</span>
+              <select id="editDetention" required>
+                <option>ללא</option>
+                <option>נלקח לחקירה</option>
+                <option>תושאל טלפונית</option>
+                <option>עצור</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="label">הערות ואירועים חריגים</span>
+          <textarea id="editNotes" rows="4"></textarea>
+        </label>
+
+        <div class="modalActions">
+          <button type="submit" class="btn primary">שמירה</button>
+          <button type="button" class="btn secondary" id="btnCancelEdit">ביטול</button>
+        </div>
+
+        <div class="toast" id="editToast" aria-live="polite"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== REFINE LOCATION MODAL ===================== -->
+  <div class="modal" id="locModal" aria-hidden="true">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="locTitle" style="max-width: 980px;">
+      <div class="modalHeader">
+        <h3 id="locTitle">דיוק מיקום</h3>
+        <button class="iconBtn" id="btnCloseLoc" aria-label="סגור">✕</button>
+      </div>
+
+      <div class="modalBody">
+        <div class="card mapCard" style="margin:0;">
+          <div id="refineMap" class="map" style="height:520px"></div>
+          <div class="mapLegend">
+            <span class="dot" style="background: rgba(25,195,125,0.95); box-shadow: 0 0 0 2px rgba(25,195,125,0.22);"></span>
+            <span>מיקום נבחר</span>
+          </div>
+        </div>
+
+        <div class="modalActions" style="margin-top:14px;">
+          <button type="button" class="btn primary" id="btnConfirmLoc">אישור</button>
+          <button type="button" class="btn secondary" id="btnCancelLoc">ביטול</button>
+        </div>
+
+        <input type="hidden" id="locContext" value="edit" />
+        <div class="toast" id="locToast" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
